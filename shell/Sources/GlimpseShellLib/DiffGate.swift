@@ -14,6 +14,11 @@ public enum Diff {
 
     /// Samples the green channel of a BGRA pixel buffer on a grid×grid lattice.
     public static func sample(_ pixelBuffer: CVPixelBuffer, grid: Int = 32) -> [UInt8] {
+        // Fail loud on non-BGRA input: silently sampling another layout would
+        // yield a valid-looking array and spurious isChanged results.
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else {
+            return []
+        }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return [] }
