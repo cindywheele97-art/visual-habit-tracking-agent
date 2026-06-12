@@ -1,0 +1,59 @@
+import Foundation
+import Testing
+@testable import GlimpseShellLib
+
+// WHY: field names on the wire must match the Python brain exactly
+// (snake_case). A silent mismatch breaks the whole pipeline.
+@Test
+func ocrMsgEncodesSnakeCase() throws {
+    let msg = OcrMsg(
+        seq: 1, ts: "2026-06-11T12:00:00Z", regionId: "region-1",
+        blocks: [Block(text: "你好", x0: 0.05, x1: 0.4, conf: 0.97)]
+    )
+    let data = try Wire.encodeLine(msg)
+    let json = String(data: data, encoding: .utf8)!
+    #expect(json.contains("\"region_id\":\"region-1\""))
+    #expect(json.contains("\"type\":\"ocr\""))
+    #expect(json.hasSuffix("\n"))
+}
+
+@Test
+func decodeSuggestionsFromBrain() throws {
+    let line = #"{"type":"suggestions","region_id":"region-1","items":[{"id":"s1","text":"好的"}],"stale":false}"#
+    guard case .suggestions(let msg)? = Wire.decodeBrainMessage(Data(line.utf8)) else {
+        #expect(Bool(false), "expected suggestions")
+        return
+    }
+    #expect(msg.items.first?.text == "好的")
+}
+
+@Test
+func decodeAckAndStatus() throws {
+    guard case .ack(let ack)? = Wire.decodeBrainMessage(Data(#"{"type":"ack","seq":7}"#.utf8)) else {
+        #expect(Bool(false), "expected ack")
+        return
+    }
+    #expect(ack.seq == 7)
+    guard case .status(let st)? = Wire.decodeBrainMessage(
+        Data(#"{"type":"status","state":"watching","detail":""}"#.utf8)
+    ) else {
+        #expect(Bool(false), "expected status")
+        return
+    }
+    #expect(st.state == "watching")
+}
+
+@Test
+func unknownTypeReturnsNil() {
+    #expect(Wire.decodeBrainMessage(Data(#"{"type":"mystery"}"#.utf8)) == nil)
+}
+
+@Test
+func lineBufferSplitsAndKeepsPartial() {
+    let buf = LineBuffer()
+    var lines = buf.feed(Data("{\"a\":1}\n{\"b\"".utf8))
+    #expect(lines.count == 1)
+    lines = buf.feed(Data(":2}\n".utf8))
+    #expect(lines.count == 1)
+    #expect(String(data: lines[0], encoding: .utf8) == "{\"b\":2}")
+}

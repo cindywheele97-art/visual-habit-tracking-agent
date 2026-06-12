@@ -1,0 +1,179 @@
+import Foundation
+
+// MARK: - Messages (mirror of brain/src/glimpse_brain/protocol.py)
+
+public struct Block: Codable, Equatable {
+    public var text: String
+    public var x0: Double
+    public var x1: Double
+    public var conf: Double
+
+    public init(text: String, x0: Double, x1: Double, conf: Double) {
+        self.text = text
+        self.x0 = x0
+        self.x1 = x1
+        self.conf = conf
+    }
+}
+
+public struct OcrMsg: Codable {
+    public var type = "ocr"
+    public var seq: Int
+    public var ts: String
+    public var regionId: String
+    public var blocks: [Block]
+
+    public init(seq: Int, ts: String, regionId: String, blocks: [Block]) {
+        self.seq = seq
+        self.ts = ts
+        self.regionId = regionId
+        self.blocks = blocks
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case seq
+        case ts
+        case regionId = "region_id"
+        case blocks
+    }
+}
+
+public struct HelloMsg: Codable {
+    public var type = "hello"
+    public var shellVersion: String
+
+    public init(shellVersion: String) {
+        self.shellVersion = shellVersion
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case shellVersion = "shell_version"
+    }
+}
+
+public struct CopiedMsg: Codable {
+    public var type = "copied"
+    public var suggestionId: String
+    public var regionId: String
+
+    public init(suggestionId: String, regionId: String) {
+        self.suggestionId = suggestionId
+        self.regionId = regionId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case suggestionId = "suggestion_id"
+        case regionId = "region_id"
+    }
+}
+
+public struct AckMsg: Codable {
+    public var type: String
+    public var seq: Int
+
+    public init(type: String, seq: Int) {
+        self.type = type
+        self.seq = seq
+    }
+}
+
+public struct SuggestionItem: Codable, Identifiable, Equatable {
+    public var id: String
+    public var text: String
+
+    public init(id: String, text: String) {
+        self.id = id
+        self.text = text
+    }
+}
+
+public struct SuggestionsMsg: Codable {
+    public var type: String
+    public var regionId: String
+    public var items: [SuggestionItem]
+    public var stale: Bool
+
+    public init(type: String, regionId: String, items: [SuggestionItem], stale: Bool) {
+        self.type = type
+        self.regionId = regionId
+        self.items = items
+        self.stale = stale
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case regionId = "region_id"
+        case items
+        case stale
+    }
+}
+
+public struct StatusMsg: Codable {
+    public var type: String
+    public var state: String
+    public var detail: String
+
+    public init(type: String, state: String, detail: String) {
+        self.type = type
+        self.state = state
+        self.detail = detail
+    }
+}
+
+public enum BrainMessage {
+    case ack(AckMsg)
+    case suggestions(SuggestionsMsg)
+    case status(StatusMsg)
+}
+
+// MARK: - Wire encoding
+
+public enum Wire {
+    public static func encodeLine<T: Codable>(_ msg: T) throws -> Data {
+        let encoder = JSONEncoder()
+        var data = try encoder.encode(msg)
+        data.append(0x0A)  // newline
+        return data
+    }
+
+    public static func decodeBrainMessage(_ line: Data) -> BrainMessage? {
+        let decoder = JSONDecoder()
+        struct Probe: Decodable {
+            let type: String
+        }
+
+        guard let probe = try? decoder.decode(Probe.self, from: line) else { return nil }
+
+        switch probe.type {
+        case "ack":
+            return (try? decoder.decode(AckMsg.self, from: line)).map(BrainMessage.ack)
+        case "suggestions":
+            return (try? decoder.decode(SuggestionsMsg.self, from: line)).map(BrainMessage.suggestions)
+        case "status":
+            return (try? decoder.decode(StatusMsg.self, from: line)).map(BrainMessage.status)
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - NDJSON framing
+
+public final class LineBuffer {
+    private var buffer = Data()
+
+    public init() {}
+
+    public func feed(_ chunk: Data) -> [Data] {
+        buffer.append(chunk)
+        var lines: [Data] = []
+        while let newlineIndex = buffer.firstIndex(of: 0x0A) {
+            lines.append(buffer.subdata(in: buffer.startIndex..<newlineIndex))
+            buffer.removeSubrange(buffer.startIndex...newlineIndex)
+        }
+        return lines
+    }
+}
