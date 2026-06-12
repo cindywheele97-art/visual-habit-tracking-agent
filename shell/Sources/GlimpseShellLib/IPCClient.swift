@@ -42,7 +42,7 @@ public final class IPCClient {
         guard fd < 0 else { return }
         let newFd = Self.dial(path)
         guard newFd >= 0 else {
-            queue.asyncAfter(deadline: .now() + 1.0) { self.connect() }
+            queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.connect() }
             return
         }
         fd = newFd
@@ -85,11 +85,13 @@ public final class IPCClient {
             close(fd)
             fd = -1
         }
-        queue.asyncAfter(deadline: .now() + 1.0) { self.connect() }
+        queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.connect() }
     }
 
     private func writeData(_ data: Data) {
         guard fd >= 0 else { return }
+        // Local UDS + <4KB lines: write is atomic w.r.t. the kernel buffer;
+        // a short write is not expected here.
         let result = data.withUnsafeBytes { rawBuffer -> Int in
             guard let baseAddress = rawBuffer.baseAddress else { return -1 }
             return Darwin.write(fd, baseAddress, data.count)
@@ -102,6 +104,10 @@ public final class IPCClient {
     private static func dial(_ path: String) -> Int32 {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return -1 }
+        // Without SO_NOSIGPIPE, writing after the brain dies raises SIGPIPE
+        // and kills the whole shell process instead of returning EPIPE.
+        var one: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = path.utf8CString
