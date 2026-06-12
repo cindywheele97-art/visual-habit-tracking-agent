@@ -26,3 +26,10 @@ def test_redact_payload_walks_nested_values() -> None:
     assert "13812345678" not in str(out)
     assert "13912345678" not in str(out)
     assert out["n"] == 42
+
+
+def test_redact_payload_walks_tuples() -> None:
+    # Privacy boundary must hold for every container type that can carry text.
+    r = Redactor([r"1[3-9]\d{9}"])
+    out = r.redact_payload({"t": ("13812345678", "ok")})
+    assert "13812345678" not in str(out)

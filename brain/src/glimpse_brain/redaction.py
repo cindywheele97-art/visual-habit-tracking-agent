@@ -24,6 +24,8 @@ class Redactor:
             return self.redact(value)
         if isinstance(value, list):
             return [self._redact_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._redact_value(v) for v in value)
         if isinstance(value, dict):
             return {k: self._redact_value(v) for k, v in value.items()}
         return value
