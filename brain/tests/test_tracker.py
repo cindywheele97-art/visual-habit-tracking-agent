@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from glimpse_brain.protocol import Block
+from glimpse_brain.tracker import ConversationTracker
+
+
+def _b(text: str, x0: float = 0.05, x1: float = 0.4, conf: float = 0.95) -> Block:
+    return Block(text=text, x0=x0, x1=x1, conf=conf)
+
+
+def _own(text: str) -> Block:  # right-aligned bubble = our own reply
+    return Block(text=text, x0=0.6, x1=0.95, conf=0.95)
+
+
+def make_tracker() -> ConversationTracker:
+    return ConversationTracker(
+        min_confidence=0.5, side_threshold=0.5, ignore_patterns=[r"^\d{1,2}:\d{2}$"]
+    )
+
+
+def test_new_inbound_message_detected_once() -> None:
+    # WHY: duplicate suggestions for one message destroy user trust (spec §8.2).
+    t = make_tracker()
+    first = t.ingest([_b("你好，在吗？")])
+    assert first.new_inbound == ["你好，在吗？"]
+    again = t.ingest([_b("你好，在吗？")])  # re-OCR of static screen
+    assert again.new_inbound == []
+
+
+def test_own_reply_does_not_trigger() -> None:
+    # WHY: replying to our own replies would loop the agent on itself.
+    t = make_tracker()
+    t.ingest([_b("多少钱？")])
+    result = t.ingest([_b("多少钱？"), _own("99元包邮哦")])
+    assert result.new_inbound == []
+    assert result.new_outbound == ["99元包邮哦"]
+
+
+def test_append_only_new_tail_is_reported() -> None:
+    t = make_tracker()
+    t.ingest([_b("第一条")])
+    result = t.ingest([_b("第一条"), _b("第二条"), _b("第三条")])
+    assert result.new_inbound == ["第二条", "第三条"]
+
+
+def test_scroll_back_does_not_trigger() -> None:
+    # WHY: scrolling up surfaces OLD lines at the top; the bottom line is one
+    # we've already seen, so the new-tail scan must come up empty.
+    t = make_tracker()
+    t.ingest([_b("旧消息A"), _b("旧消息B")])
+    result = t.ingest([_b("更旧的消息"), _b("旧消息A"), _b("旧消息B")])
+    assert result.new_inbound == []
+
+
+def test_timestamp_lines_ignored() -> None:
+    t = make_tracker()
+    result = t.ingest([_b("12:30", x0=0.45, x1=0.55), _b("你好")])
+    assert result.new_inbound == ["你好"]
+
+
+def test_low_confidence_snapshot_rejected() -> None:
+    # WHY: OCR garbage is the #1 source of phantom "new messages" (spec §5).
+    t = make_tracker()
+    result = t.ingest([_b("乱码乱码", conf=0.2)])
+    assert not result.accepted
+    assert result.reason == "low-confidence"
+
+
+def test_tail_formats_speakers() -> None:
+    t = make_tracker()
+    t.ingest([_b("在吗"), _own("在的")])
+    assert t.tail() == ["客户: 在吗", "我: 在的"]
