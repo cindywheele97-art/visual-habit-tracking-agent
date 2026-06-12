@@ -30,7 +30,10 @@ class LlmCfg(BaseModel):
 class TrackerCfg(BaseModel):
     model_config = ConfigDict(extra="forbid")
     settle_ms: int = Field(default=800, ge=0)
-    min_ocr_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    # 0.3, not 0.5: Vision's accurate-mode confidence for CJK screen text
+    # commonly sits in 0.3-0.6; a 0.5 floor silently drops real Chinese
+    # messages at the tracker gate. English text scores ~0.8+ either way.
+    min_ocr_confidence: float = Field(default=0.3, ge=0.0, le=1.0)
     side_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     ignore_patterns: list[str] = Field(default_factory=lambda: [r"^\d{1,2}:\d{2}$"])
 

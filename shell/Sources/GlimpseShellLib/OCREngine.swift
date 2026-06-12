@@ -4,6 +4,10 @@ import Vision
 public enum OCR {
     /// Recognize text in a region image. Returns blocks ordered top-to-bottom,
     /// with x-extents normalized [0,1] within the image (Vision's own space).
+    ///
+    /// Heavy (100-300 ms in accurate mode) — must be called off the main thread.
+    /// Bounding boxes assume horizontal text; vertical CJK layouts would swap
+    /// the meaning of the x-extents (out of scope for v1 chat windows).
     public static func recognize(_ image: CGImage) throws -> [Block] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
