@@ -44,6 +44,30 @@ func decodeAckAndStatus() throws {
 }
 
 @Test
+func helloAndCopiedEncodeSnakeCase() throws {
+    // WHY: these two inbound messages have the remaining snake_case fields;
+    // a mapping regression would break the wire silently.
+    let hello = String(data: try Wire.encodeLine(HelloMsg(shellVersion: "0.1.0")), encoding: .utf8)!
+    #expect(hello.contains("\"shell_version\":\"0.1.0\""))
+    let copied = String(
+        data: try Wire.encodeLine(CopiedMsg(suggestionId: "s1", regionId: "region-1")),
+        encoding: .utf8
+    )!
+    #expect(copied.contains("\"suggestion_id\":\"s1\""))
+    #expect(copied.contains("\"region_id\":\"region-1\""))
+}
+
+@Test
+func lineBufferStripsCRAndSkipsEmptyLines() {
+    // WHY: a CRLF-emitting intermediary must not cause silent decode failures.
+    let buf = LineBuffer()
+    let lines = buf.feed(Data("{\"a\":1}\r\n\n{\"b\":2}\n".utf8))
+    #expect(lines.count == 2)
+    #expect(String(data: lines[0], encoding: .utf8) == "{\"a\":1}")
+    #expect(String(data: lines[1], encoding: .utf8) == "{\"b\":2}")
+}
+
+@Test
 func unknownTypeReturnsNil() {
     #expect(Wire.decodeBrainMessage(Data(#"{"type":"mystery"}"#.utf8)) == nil)
 }

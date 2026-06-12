@@ -71,11 +71,10 @@ public struct CopiedMsg: Codable {
 }
 
 public struct AckMsg: Codable {
-    public var type: String
+    // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
     public var seq: Int
 
-    public init(type: String, seq: Int) {
-        self.type = type
+    public init(seq: Int) {
         self.seq = seq
     }
 }
@@ -91,20 +90,18 @@ public struct SuggestionItem: Codable, Identifiable, Equatable {
 }
 
 public struct SuggestionsMsg: Codable {
-    public var type: String
+    // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
     public var regionId: String
     public var items: [SuggestionItem]
     public var stale: Bool
 
-    public init(type: String, regionId: String, items: [SuggestionItem], stale: Bool) {
-        self.type = type
+    public init(regionId: String, items: [SuggestionItem], stale: Bool) {
         self.regionId = regionId
         self.items = items
         self.stale = stale
     }
 
     enum CodingKeys: String, CodingKey {
-        case type
         case regionId = "region_id"
         case items
         case stale
@@ -112,12 +109,11 @@ public struct SuggestionsMsg: Codable {
 }
 
 public struct StatusMsg: Codable {
-    public var type: String
+    // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
     public var state: String
     public var detail: String
 
-    public init(type: String, state: String, detail: String) {
-        self.type = type
+    public init(state: String, detail: String) {
         self.state = state
         self.detail = detail
     }
@@ -171,7 +167,15 @@ public final class LineBuffer {
         buffer.append(chunk)
         var lines: [Data] = []
         while let newlineIndex = buffer.firstIndex(of: 0x0A) {
-            lines.append(buffer.subdata(in: buffer.startIndex..<newlineIndex))
+            var line = buffer.subdata(in: buffer.startIndex..<newlineIndex)
+            // Strip trailing CR if present (CRLF tolerance)
+            if line.last == 0x0D {
+                line = line.subdata(in: line.startIndex..<line.index(before: line.endIndex))
+            }
+            // Skip empty lines
+            if !line.isEmpty {
+                lines.append(line)
+            }
             buffer.removeSubrange(buffer.startIndex...newlineIndex)
         }
         return lines
