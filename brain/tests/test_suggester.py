@@ -87,3 +87,19 @@ def test_rate_limiter_window() -> None:
     assert not limiter.allow()
     now[0] = 61.0  # old stamps age out of the 60s window
     assert limiter.allow()
+
+
+async def test_missing_playbook_degrades_not_crashes(tmp_path: Path) -> None:
+    # WHY: a misconfigured playbook path must not kill suggestions silently —
+    # the sentinel makes the gap visible in the prompt (and in logs).
+    llm = FakeLLM()
+    s = Suggester(
+        llm=llm,
+        model="claude-sonnet-4-6",
+        playbook_path=tmp_path / "nope.md",
+        redactor=Redactor([]),
+        limiter=RateLimiter(10),
+        max_suggestions=3,
+    )
+    await s.suggest(["客户: 在吗"])
+    assert "(playbook file missing)" in llm.calls[0]["system"]
