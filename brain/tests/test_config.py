@@ -42,3 +42,11 @@ def test_default_redaction_catches_cn_mobile() -> None:
     import re
 
     assert any(re.search(p, "13812345678") for p in cfg.redaction.patterns)
+
+
+def test_malformed_toml_names_the_file(tmp_path: Path) -> None:
+    # Fail-loud rule: the operator must see WHICH file is broken.
+    toml = tmp_path / "broken.toml"
+    toml.write_text("[tracker\nsettle_ms = 1", encoding="utf-8")
+    with pytest.raises(ValueError, match="broken.toml"):
+        load_config(toml)

@@ -53,5 +53,8 @@ class Config(BaseModel):
 def load_config(path: Path | None) -> Config:
     if path is None or not path.exists():
         return Config()
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"malformed TOML in {path}: {exc}") from exc
     return Config.model_validate(data)
