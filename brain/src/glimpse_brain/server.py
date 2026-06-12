@@ -1,0 +1,142 @@
+"""Asyncio Unix-socket server: the brain's main loop."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+
+from glimpse_brain.config import Config
+from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
+from glimpse_brain.events import EventLog
+from glimpse_brain.protocol import (
+    AckMsg,
+    CopiedMsg,
+    HelloMsg,
+    OcrMsg,
+    OutboundMsg,
+    ProtocolError,
+    StatusMsg,
+    SuggestionItem,
+    SuggestionsMsg,
+    parse_inbound,
+    to_line,
+)
+from glimpse_brain.redaction import Redactor
+from glimpse_brain.settle import SettleGate
+from glimpse_brain.suggester import AnthropicLLM, LLMClient, RateLimiter, Suggester
+from glimpse_brain.tracker import ConversationTracker
+
+log = logging.getLogger("glimpse.server")
+
+
+class GlimpseServer:
+    def __init__(self, cfg: Config, llm: LLMClient | None = None) -> None:
+        self._cfg = cfg
+        self._redactor = Redactor(cfg.redaction.patterns)
+        self._events = EventLog(Path(cfg.brain.event_log), self._redactor)
+        self._tracker = ConversationTracker(
+            min_confidence=cfg.tracker.min_ocr_confidence,
+            side_threshold=cfg.tracker.side_threshold,
+            ignore_patterns=cfg.tracker.ignore_patterns,
+        )
+        self._suggester = Suggester(
+            llm=llm if llm is not None else AnthropicLLM(),
+            model=cfg.llm.model,
+            playbook_path=Path(cfg.brain.playbook),
+            redactor=self._redactor,
+            limiter=RateLimiter(cfg.llm.max_calls_per_minute),
+            max_suggestions=cfg.llm.max_suggestions,
+        )
+        self._settle: SettleGate | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._region_id = ""
+
+    async def run(self) -> None:
+        socket_path = Path(self._cfg.brain.socket_path)
+        socket_path.parent.mkdir(parents=True, exist_ok=True)
+        socket_path.unlink(missing_ok=True)
+        server = await asyncio.start_unix_server(self._handle, path=str(socket_path))
+        log.info("listening on %s", socket_path)
+        async with server:
+            await server.serve_forever()
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        # Single-shell assumption: the newest connection wins.
+        self._writer = writer
+        self._settle = SettleGate(self._cfg.tracker.settle_ms / 1000.0, self._fire)
+        try:
+            while True:
+                raw = await reader.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8", errors="replace").strip()
+                if line:
+                    await self._dispatch(line)
+        finally:
+            self._settle.cancel()
+            if self._writer is writer:
+                self._writer = None
+            writer.close()
+
+    async def _dispatch(self, line: str) -> None:
+        try:
+            msg = parse_inbound(line)
+        except ProtocolError as exc:
+            log.warning("bad message: %s", exc)
+            self._events.append("error", self._region_id, {"error": "bad-message"})
+            return
+        if isinstance(msg, HelloMsg):
+            log.info("shell connected: v%s", msg.shell_version)
+            await self._send(StatusMsg(state="watching"))
+        elif isinstance(msg, CopiedMsg):
+            self._events.append(
+                "suggestion_copied", msg.region_id, {"suggestion_id": msg.suggestion_id}
+            )
+        elif isinstance(msg, OcrMsg):
+            await self._on_ocr(msg)
+
+    async def _on_ocr(self, msg: OcrMsg) -> None:
+        await self._send(AckMsg(seq=msg.seq))
+        self._region_id = msg.region_id
+        result = self._tracker.ingest(msg.blocks)
+        if not result.accepted or not (result.new_inbound or result.new_outbound):
+            return
+        self._events.append(
+            "observation",
+            msg.region_id,
+            {"inbound": result.new_inbound, "outbound": result.new_outbound},
+        )
+        if result.new_inbound:
+            await self._send(StatusMsg(state="thinking"))
+            assert self._settle is not None  # set when the client connected
+            self._settle.poke()
+
+    async def _fire(self) -> None:
+        try:
+            texts = await self._suggester.suggest(self._tracker.tail())
+        except CostCapExceeded:
+            await self._send(StatusMsg(state="degraded", detail="cost cap reached"))
+            return
+        except SuggestionParseError:
+            await self._send(StatusMsg(state="degraded", detail="unusable LLM output"))
+            return
+        except Exception as exc:  # LLM/network failure must not kill the loop
+            log.exception("suggestion pass failed")
+            self._events.append("error", self._region_id, {"error": str(exc)[:200]})
+            await self._send(StatusMsg(state="degraded", detail="llm error"))
+            return
+        items = [
+            SuggestionItem(id=f"s{i}", text=text) for i, text in enumerate(texts, 1)
+        ]
+        self._events.append("suggestion_shown", self._region_id, {"items": texts})
+        await self._send(SuggestionsMsg(region_id=self._region_id, items=items))
+        await self._send(StatusMsg(state="watching"))
+
+    async def _send(self, msg: OutboundMsg) -> None:
+        if self._writer is None:
+            return
+        self._writer.write(to_line(msg).encode())
+        await self._writer.drain()
