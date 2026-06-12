@@ -63,3 +63,21 @@ def test_outbound_serialization_is_one_line() -> None:
     assert '"seq":3' in ack
     status = to_line(StatusMsg(state="watching"))
     assert '"state":"watching"' in status
+
+
+def test_malformed_json_raises_protocol_error() -> None:
+    # Reader loops catch ProtocolError broadly; a truncated write or empty
+    # line must not leak a bare ValueError past that guard.
+    with pytest.raises(ProtocolError):
+        parse_inbound("not json at all")
+    with pytest.raises(ProtocolError):
+        parse_inbound("")
+
+
+def test_defaults_always_serialized() -> None:
+    # Swift Codable mirror uses non-optional fields for these; they must
+    # appear on the wire even at their default values.
+    line = to_line(SuggestionsMsg(region_id="r", items=[]))
+    assert '"stale":false' in line
+    line = to_line(StatusMsg(state="watching"))
+    assert '"detail":""' in line

@@ -60,14 +60,14 @@ class SuggestionsMsg(BaseModel):
     type: Literal["suggestions"] = "suggestions"
     region_id: str
     items: list[SuggestionItem]
-    stale: bool = False
+    stale: bool = False  # always on the wire; Swift mirror decodes non-optional
 
 
 class StatusMsg(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["status"] = "status"
     state: Literal["watching", "thinking", "degraded", "error"]
-    detail: str = ""
+    detail: str = ""  # always on the wire; Swift mirror decodes non-optional
 
 
 InboundMsg = OcrMsg | HelloMsg | CopiedMsg
@@ -83,6 +83,8 @@ def parse_inbound(line: str) -> InboundMsg:
         return _INBOUND.validate_json(line)
     except ValidationError as exc:
         raise ProtocolError(str(exc)) from exc
+    except ValueError as exc:  # malformed JSON (not a schema error)
+        raise ProtocolError(f"invalid JSON: {exc}") from exc
 
 
 def to_line(msg: BaseModel) -> str:
