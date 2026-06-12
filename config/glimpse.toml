@@ -1,0 +1,20 @@
+# Glimpse default config. Paths support "~".
+
+[brain]
+socket_path = "~/.glimpse/glimpse.sock"
+event_log = "~/.glimpse/events.jsonl"
+playbook = "~/.glimpse/playbook.md"
+
+[llm]
+model = "claude-sonnet-4-6"
+max_calls_per_minute = 6
+max_suggestions = 3
+
+[tracker]
+settle_ms = 800
+min_ocr_confidence = 0.3  # CJK screen text scores 0.3-0.6 in Vision accurate mode
+side_threshold = 0.5
+ignore_patterns = ["^\\d{1,2}:\\d{2}$"]
+
+[redaction]
+patterns = ["1[3-9]\\d{9}", "\\b\\d{10,}\\b"]
