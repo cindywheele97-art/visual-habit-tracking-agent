@@ -50,6 +50,7 @@ class GlimpseServer:
         )
         self._settle: SettleGate | None = None
         self._writer: asyncio.StreamWriter | None = None
+        self._send_lock = asyncio.Lock()
         self._region_id = ""
 
     async def run(self) -> None:
@@ -66,17 +67,25 @@ class GlimpseServer:
     ) -> None:
         # Single-shell assumption: the newest connection wins.
         self._writer = writer
-        self._settle = SettleGate(self._cfg.tracker.settle_ms / 1000.0, self._fire)
+        settle = SettleGate(self._cfg.tracker.settle_ms / 1000.0, self._fire)
+        self._settle = settle
         try:
             while True:
                 raw = await reader.readline()
                 if not raw:
                     break
                 line = raw.decode("utf-8", errors="replace").strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     await self._dispatch(line)
+                except (BrokenPipeError, ConnectionResetError):
+                    log.debug("shell disconnected mid-write")
+                    break
         finally:
-            self._settle.cancel()
+            settle.cancel()  # our own gate only — never the replacement's
+            if self._settle is settle:
+                self._settle = None
             if self._writer is writer:
                 self._writer = None
             writer.close()
@@ -136,7 +145,8 @@ class GlimpseServer:
         await self._send(StatusMsg(state="watching"))
 
     async def _send(self, msg: OutboundMsg) -> None:
-        if self._writer is None:
-            return
-        self._writer.write(to_line(msg).encode())
-        await self._writer.drain()
+        async with self._send_lock:
+            if self._writer is None:
+                return
+            self._writer.write(to_line(msg).encode())
+            await self._writer.drain()

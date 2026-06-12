@@ -87,6 +87,33 @@ async def test_happy_path_and_no_duplicate_suggestions(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_reconnect_does_not_cancel_new_connections_settle(tmp_path: Path) -> None:
+    # WHY: the old connection's cleanup must cancel only ITS OWN settle gate.
+    # If it cancels the new connection's gate, a reconnect racing a pending
+    # suggestion silently kills suggestions — no crash, just loss.
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader1, writer1 = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer1.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer1.drain()
+        await read_until(reader1, "suggestions")  # first connection fully settled
+
+        reader2, writer2 = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer2.write((OCR_LINE % (2, "什么时候发货？")).encode())
+        await writer2.drain()
+        assert (await read_until(reader2, "ack"))["seq"] == 2  # new gate poked
+
+        writer1.close()  # old handler unwinds DURING the new settle window
+        sug = await read_until(reader2, "suggestions", timeout=1.0)
+        assert sug["items"]
+        writer2.close()
+    finally:
+        task.cancel()
+
+
 async def test_copied_message_logged(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     server = GlimpseServer(cfg, llm=FakeLLM())
