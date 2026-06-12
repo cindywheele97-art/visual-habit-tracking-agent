@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
+
+log = logging.getLogger(__name__)
 
 
 class SettleGate:
@@ -13,7 +16,9 @@ class SettleGate:
         self._task: asyncio.Task[None] | None = None
 
     def poke(self) -> None:
-        """(Re)start the settle timer; the action fires after `delay` quiet seconds."""
+        """(Re)start the settle timer; the action fires after `delay` quiet seconds.
+
+        Must be called from within a running event loop."""
         self.cancel()
         self._task = asyncio.get_running_loop().create_task(self._run())
 
@@ -24,4 +29,7 @@ class SettleGate:
 
     async def _run(self) -> None:
         await asyncio.sleep(self._delay)
-        await self._action()
+        try:
+            await self._action()
+        except Exception:  # fire-and-forget task: a crash must be visible, not GC'd
+            log.exception("settle action raised")
