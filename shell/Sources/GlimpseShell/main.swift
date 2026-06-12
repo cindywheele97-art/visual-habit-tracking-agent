@@ -10,9 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let diffGate = DiffGate()
     private var ipc: IPCClient!
     private var selector: RegionSelector?
+    // Capture-queue-confined: processFrame is the only reader/writer after
+    // init. Do not read seq from main without hopping to the capture queue.
     private var seq = 0
     private let regionId = "region-1"
     private let isoFormatter = ISO8601DateFormatter()
+    // Main-thread-confined: written via DispatchQueue.main, read by the
+    // watchdog timer (main runloop). Do not touch from other threads.
     private var watching = false
     private var lastEmptyOcr: Date?
 
@@ -83,8 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try await capture.start(region: region) { [weak self] pixelBuffer in
                     self?.processFrame(pixelBuffer)
                 }
-                self.watching = true
-                self.lastEmptyOcr = nil
+                // Task{} runs on the cooperative pool, not main — hop before
+                // touching the main-confined flags the watchdog reads.
+                DispatchQueue.main.async {
+                    self.watching = true
+                    self.lastEmptyOcr = nil
+                }
                 self.overlay.setStatus("watching", detail: "")
             } catch {
                 self.overlay.setStatus("error", detail: "capture: \(error.localizedDescription)")
