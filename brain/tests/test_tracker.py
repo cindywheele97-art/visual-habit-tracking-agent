@@ -70,3 +70,32 @@ def test_tail_formats_speakers() -> None:
     t = make_tracker()
     t.ingest([_b("在吗"), _own("在的")])
     assert t.tail() == ["客户: 在吗", "我: 在的"]
+
+
+def test_confidence_gate_ignores_filtered_blocks() -> None:
+    # WHY: a low-confidence timestamp must not veto high-confidence messages.
+    t = ConversationTracker(
+        min_confidence=0.8, side_threshold=0.5, ignore_patterns=[r"^\d{1,2}:\d{2}$"]
+    )
+    result = t.ingest(
+        [
+            Block(text="12:30", x0=0.45, x1=0.55, conf=0.1),
+            Block(text="你好", x0=0.05, x1=0.4, conf=0.95),
+        ]
+    )
+    assert result.accepted
+    assert result.new_inbound == ["你好"]
+
+
+def test_seen_eviction_is_bounded_and_behavioral() -> None:
+    # WHY: bounded memory wins over perfect dedup — after the cap rolls,
+    # an evicted ancient line may trigger once more; unbounded growth never.
+    t = ConversationTracker(
+        min_confidence=0.5, side_threshold=0.5, ignore_patterns=[], max_seen=3
+    )
+    for i in range(5):
+        t.ingest([Block(text=f"m{i}", x0=0.05, x1=0.4, conf=0.9)])
+    # m0 has been evicted from the seen-set, so it re-triggers exactly as a
+    # genuinely-new line would.
+    result = t.ingest([Block(text="m0", x0=0.05, x1=0.4, conf=0.9)])
+    assert result.new_inbound == ["m0"]
