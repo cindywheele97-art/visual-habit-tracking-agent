@@ -17,9 +17,11 @@ public final class OverlayController {
     private let panel: NSPanel
 
     public init() {
+        // No .closable: an accidentally closed panel has no reopen path until
+        // a menu item exists; an always-on assist must not be dismissable.
         panel = NSPanel(
             contentRect: NSRect(x: 80, y: 120, width: 340, height: 300),
-            styleMask: [.nonactivatingPanel, .titled, .closable, .resizable],
+            styleMask: [.nonactivatingPanel, .titled, .resizable],
             backing: .buffered, defer: false
         )
         panel.level = .floating
@@ -34,14 +36,20 @@ public final class OverlayController {
         panel.orderFrontRegardless()
     }
 
+    /// Safe to call from any thread: @Published mutation hops to main inside.
     public func update(items: [SuggestionItem], stale: Bool) {
-        model.items = items
-        model.stale = stale
+        DispatchQueue.main.async {
+            self.model.items = items
+            self.model.stale = stale
+        }
     }
 
+    /// Safe to call from any thread: @Published mutation hops to main inside.
     public func setStatus(_ state: String, detail: String) {
-        model.status = state
-        model.detail = detail
+        DispatchQueue.main.async {
+            self.model.status = state
+            self.model.detail = detail
+        }
     }
 }
 
@@ -74,21 +82,25 @@ struct OverlayView: View {
             if model.items.isEmpty {
                 Text("等待新消息…").font(.callout).foregroundColor(.secondary)
             }
-            ForEach(model.items) { item in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(item.text)
-                        .font(.system(size: 13))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("复制") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(item.text, forType: .string)
-                        model.onCopy?(item.id)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.items) { item in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(item.text)
+                                .font(.system(size: 13))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("复制") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(item.text, forType: .string)
+                                model.onCopy?(item.id)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.gray.opacity(0.12))
+                        .cornerRadius(6)
                     }
                 }
-                .padding(8)
-                .background(Color.gray.opacity(0.12))
-                .cornerRadius(6)
             }
             Spacer()
         }
