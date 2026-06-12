@@ -12,6 +12,14 @@ public enum ScreenCoords {
     }
 }
 
+/// Borderless windows refuse key status by default, which silently swallows
+/// every mouse event in the selection view — the overlay would render but
+/// never respond to a drag.
+private final class KeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 /// Full-screen drag-to-select. Calls back with the region in CG coordinates.
 public final class RegionSelector {
     private var window: NSWindow?
@@ -23,10 +31,11 @@ public final class RegionSelector {
 
     public func begin() {
         let frame = NSScreen.screens.reduce(CGRect.zero) { $0.union($1.frame) }
-        let win = NSWindow(
+        let win = KeyableWindow(
             contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false
         )
         win.level = .screenSaver
+        win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         win.isOpaque = false
         win.backgroundColor = NSColor.black.withAlphaComponent(0.15)
         win.contentView = SelectionView(frame: CGRect(origin: .zero, size: frame.size)) {

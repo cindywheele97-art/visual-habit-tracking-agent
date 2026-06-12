@@ -14,6 +14,7 @@ public final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// `region` is in CG global coordinates (origin top-left of primary display).
     public func start(region: CGRect, onFrame: @escaping (CVPixelBuffer) -> Void) async throws {
+        await stop()  // no-op on first call; on re-select it stops the old stream
         self.onFrame = onFrame
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
