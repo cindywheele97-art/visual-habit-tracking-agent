@@ -21,10 +21,13 @@ public enum OCR {
             .sorted { $0.boundingBox.midY > $1.boundingBox.midY }
             .compactMap { observation -> Block? in
                 guard let candidate = observation.topCandidates(1).first else { return nil }
+                // Vision can emit values a hair outside [0,1] for edge-touching
+                // text; the brain rejects out-of-range blocks (frame silently
+                // dropped), so clamp at the source.
                 return Block(
                     text: candidate.string,
-                    x0: observation.boundingBox.minX,
-                    x1: observation.boundingBox.maxX,
+                    x0: max(0.0, min(1.0, observation.boundingBox.minX)),
+                    x1: max(0.0, min(1.0, observation.boundingBox.maxX)),
                     conf: Double(candidate.confidence)
                 )
             }

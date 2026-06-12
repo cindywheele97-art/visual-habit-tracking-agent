@@ -10,6 +10,6 @@ fi
 
 (cd brain && source .venv/bin/activate && exec python -m glimpse_brain --config ../config/glimpse.toml) &
 BRAIN_PID=$!
-trap 'kill "$BRAIN_PID" 2>/dev/null || true' EXIT
+trap 'kill "$BRAIN_PID" 2>/dev/null || true' EXIT INT TERM
 
 (cd shell && swift run -c release GlimpseShell)

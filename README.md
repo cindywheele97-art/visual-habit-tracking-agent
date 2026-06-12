@@ -15,6 +15,7 @@ pip install -e ".[dev]"
 cd ../shell && swift build
 
 # Your playbook (edit it — suggestions are grounded in this file)
+# (run from shell/, i.e. right after the previous step)
 mkdir -p ~/.glimpse && cp ../playbook/playbook.md ~/.glimpse/playbook.md
 ```
 
@@ -42,7 +43,7 @@ appear in the Glimpse panel; click 复制 and paste into your chat app.
 
 ```bash
 cd brain && pytest && ruff check src tests && mypy
-cd shell && swift test
+cd ../shell && swift test
 ```
 
 ## E2E smoke (spec §8 gate, run by a human)
