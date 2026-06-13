@@ -53,3 +53,46 @@ cd ../shell && swift test
 3. Wait 30 s: no duplicate suggestions. Send a reply via 发送: no trigger.
 4. 复制 a suggestion → `~/.glimpse/events.jsonl` gains `suggestion_copied`.
 5. Idle 10 min: shell CPU ~0–3% in Activity Monitor; no images under `~/.glimpse/`.
+
+## Phase 2 — habit tracking (click capture + daily interest summary)
+
+Glimpse can also record *what you click* in opted-in apps and summarize the day's
+interests on demand. Capture only runs for apps you list — nothing else is read.
+
+### Setup
+
+```bash
+# Opt in the apps to observe (bundle IDs). Start from the example:
+cp config/allowlist.example.json ~/.glimpse/allowlist.json
+# Edit to taste. Find a bundle id with:  osascript -e 'id of app "Google Chrome"'
+```
+
+First run also needs **Accessibility** permission for your terminal/app
+(System Settings → Privacy & Security → Accessibility) so the click sensor can
+install. Without it the overlay shows "Accessibility needed for click tracking";
+the rest of Glimpse still works.
+
+### Use
+
+Click around in an allowlisted browser, then menu bar 👁 → **Today's Interests**.
+A summary of what you looked at appears in the overlay.
+
+### Privacy
+
+- Clicks in non-allowlisted apps capture **nothing** — no pixels are read.
+- Snapshots are bounded (~600×400 around the click), OCR'd locally, never persisted
+  as images; only redacted text reaches the log and the LLM.
+- The store is the local `~/.glimpse/events.jsonl` (`kind="click"`).
+
+### E2E smoke (run by a human)
+
+1. `cp config/allowlist.example.json ~/.glimpse/allowlist.json`; ensure a listed
+   browser's bundle id is correct.
+2. `./scripts/dev.sh`; grant Accessibility if prompted; relaunch.
+3. Click several products in the allowlisted browser → `~/.glimpse/events.jsonl`
+   gains `kind="click"` lines with OCR'd text.
+4. Click in a non-allowlisted app (e.g. Notes) → **no** new `click` line appears.
+5. Menu 👁 → "Today's Interests" → a grounded summary shows in the overlay within a
+   few seconds, naming things you actually clicked.
+6. Confirm no image files under `~/.glimpse/` and no phone numbers / long digit runs
+   in the click lines (redaction).
