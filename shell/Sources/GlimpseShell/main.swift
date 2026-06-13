@@ -28,6 +28,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let isoFormatter = ISO8601DateFormatter()
     // Main-run-loop-confined watch flags (see WatchFlags).
     private let flags = WatchFlags()
+    private var sender: Sender!
+    private var calibrator: InputBoxCalibrator?
+    private var countdownTimer: Timer?
+    private var escMonitors: [Any] = []
+    private var autoSendEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "autoSendEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "autoSendEnabled") }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -40,6 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             NSMenuItem(title: "Today's Interests", action: #selector(summarize), keyEquivalent: "t")
         )
+        menu.addItem(
+            NSMenuItem(title: "设置输入框位置", action: #selector(calibrateInputBox), keyEquivalent: "i")
+        )
+        let autoSendItem = NSMenuItem(
+            title: "自动发送", action: #selector(toggleAutoSend(_:)), keyEquivalent: ""
+        )
+        autoSendItem.state = autoSendEnabled ? .on : .off
+        menu.addItem(autoSendItem)
         menu.addItem(.separator())
         menu.addItem(
             NSMenuItem(title: "Quit Glimpse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -70,6 +86,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.ipc.send(CopiedMsg(suggestionId: suggestionId, regionId: self.regionId))
         }
+
+        let sendAllowlist = AppAllowlist(path: AppAllowlist.defaultPath)
+        sender = Sender(
+            synthetic: CGEventSyntheticInput(),
+            isFrontmostAllowed: {
+                sendAllowlist.isAllowed(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            },
+            inputBoxPoint: { InputBoxStore.load() },
+            accessibilityTrusted: { AXIsProcessTrusted() },
+            setPasteboard: { text in
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            },
+            presentRefusal: { [weak self] reason in
+                self?.overlay.setStatus("degraded", detail: reason.message)
+            },
+            presentCountdown: { [weak self] countdown in
+                self?.driveCountdown(countdown)
+            },
+            emitReplied: { [weak self] id, mode in
+                guard let self else { return }
+                self.ipc.send(RepliedMsg(suggestionId: id, regionId: self.regionId, mode: mode))
+            }
+        )
+
+        overlay.model.onAct = { [weak self] id, text in
+            guard let self else { return }
+            self.sender.handle(
+                suggestionId: id, text: text,
+                autoSendOn: self.autoSendEnabled, stale: self.overlay.model.stale
+            )
+        }
+        overlay.setAutoSend(autoSendEnabled)
+
         overlay.show()
 
         // Region-dead watchdog (spec §5): frames keep changing but OCR finds no
@@ -99,6 +149,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.selector = nil
         }
         selector?.begin()
+    }
+
+    @objc private func calibrateInputBox() {
+        calibrator = InputBoxCalibrator { [weak self] point in
+            InputBoxStore.save(point)
+            self?.calibrator = nil
+            self?.overlay.setStatus("watching", detail: "输入框已设置")
+        }
+        calibrator?.begin()
+    }
+
+    @objc private func toggleAutoSend(_ item: NSMenuItem) {
+        autoSendEnabled.toggle()
+        item.state = autoSendEnabled ? .on : .off
+        overlay.setAutoSend(autoSendEnabled)
+    }
+
+    /// Ticks the countdown once per second, mirrors it into the overlay banner,
+    /// and lets Esc cancel it. Re-check of the frontmost app happens inside the
+    /// countdown's completion (Sender.finalizeSend).
+    private func driveCountdown(_ countdown: Countdown) {
+        // A superseding auto-send re-enters here while the previous countdown's
+        // monitors/timer are still live; tear them down first so a leaked local
+        // Esc monitor can't swallow Esc app-wide for the process lifetime.
+        tearDownCountdown()
+        overlay.showCountdown(remaining: countdown.remaining)
+        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 {
+                self?.sender.cancelPendingSend()
+                self?.overlay.hideCountdown()  // crisp abort: don't wait for the next tick
+                return nil
+            }
+            return event
+        }
+        let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 {
+                self?.sender.cancelPendingSend()
+                self?.overlay.hideCountdown()
+            }
+        }
+        escMonitors = [local, global].compactMap { $0 }
+
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            countdown.tick()
+            self.overlay.showCountdown(remaining: max(countdown.remaining, 0))
+            if countdown.isFinished {
+                self.tearDownCountdown()
+                self.overlay.hideCountdown()
+            }
+        }
+    }
+
+    /// Invalidate the tick timer and remove the Esc monitors. Idempotent — safe
+    /// to call at countdown completion and again on the next drive.
+    private func tearDownCountdown() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        escMonitors.forEach { NSEvent.removeMonitor($0) }
+        escMonitors = []
     }
 
     @objc private func stopWatching() {
