@@ -114,6 +114,12 @@ async def test_reconnect_does_not_cancel_new_connections_settle(tmp_path: Path) 
         task.cancel()
 
 
+CLICK_LINE = (
+    '{"type":"click","ts":"2026-06-12T09:00:00Z","app":"com.google.Chrome",'
+    '"x":12.0,"y":34.0,"blocks":[{"text":"Adidas Ultraboost","x0":0.1,"x1":0.5,"conf":0.9}]}\n'
+)
+
+
 async def test_copied_message_logged(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     server = GlimpseServer(cfg, llm=FakeLLM())
@@ -126,6 +132,53 @@ async def test_copied_message_logged(tmp_path: Path) -> None:
         await asyncio.sleep(0.1)
         log = Path(cfg.brain.event_log).read_text(encoding="utf-8")
         assert "suggestion_copied" in log
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_click_is_logged_as_click_event(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        _, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(CLICK_LINE.encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        records = [
+            json.loads(line)
+            for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
+        ]
+        clicks = [r for r in records if r["kind"] == "click"]
+        assert len(clicks) == 1
+        assert clicks[0]["payload"]["app"] == "com.google.Chrome"
+        assert clicks[0]["payload"]["texts"] == ["Adidas Ultraboost"]
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_summarize_request_returns_summary(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+
+    class SummaryLLM:
+        async def complete(self, *, system: str, user: str, model: str) -> str:
+            return "今天你在看 Adidas。"
+
+    server = GlimpseServer(cfg, llm=SummaryLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(CLICK_LINE.encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        writer.write(b'{"type":"summarize"}\n')
+        await writer.drain()
+        msg = await read_until(reader, "summary")
+        assert "Adidas" in msg["text"]
         writer.close()
     finally:
         task.cancel()

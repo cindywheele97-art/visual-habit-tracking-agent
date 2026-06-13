@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from glimpse_brain.config import Config
@@ -11,6 +12,7 @@ from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.events import EventLog
 from glimpse_brain.protocol import (
     AckMsg,
+    ClickMsg,
     CopiedMsg,
     HelloMsg,
     OcrMsg,
@@ -19,12 +21,15 @@ from glimpse_brain.protocol import (
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
+    SummarizeRequest,
+    SummaryMsg,
     parse_inbound,
     to_line,
 )
 from glimpse_brain.redaction import Redactor
 from glimpse_brain.settle import SettleGate
 from glimpse_brain.suggester import AnthropicLLM, LLMClient, RateLimiter, Suggester
+from glimpse_brain.summarizer import Summarizer
 from glimpse_brain.tracker import ConversationTracker
 
 log = logging.getLogger("glimpse.server")
@@ -47,6 +52,13 @@ class GlimpseServer:
             redactor=self._redactor,
             limiter=RateLimiter(cfg.llm.max_calls_per_minute),
             max_suggestions=cfg.llm.max_suggestions,
+        )
+        self._summarizer = Summarizer(
+            llm=llm if llm is not None else AnthropicLLM(),
+            model=cfg.llm.model,
+            event_log=Path(cfg.brain.event_log),
+            redactor=self._redactor,
+            limiter=RateLimiter(cfg.llm.max_calls_per_minute),
         )
         self._settle: SettleGate | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -104,6 +116,19 @@ class GlimpseServer:
             self._events.append(
                 "suggestion_copied", msg.region_id, {"suggestion_id": msg.suggestion_id}
             )
+        elif isinstance(msg, ClickMsg):
+            self._events.append(
+                "click",
+                "",
+                {
+                    "app": msg.app,
+                    "x": msg.x,
+                    "y": msg.y,
+                    "texts": [b.text for b in msg.blocks],
+                },
+            )
+        elif isinstance(msg, SummarizeRequest):
+            await self._on_summarize()
         elif isinstance(msg, OcrMsg):
             await self._on_ocr(msg)
 
@@ -122,6 +147,19 @@ class GlimpseServer:
             await self._send(StatusMsg(state="thinking"))
             assert self._settle is not None  # set when the client connected
             self._settle.poke()
+
+    async def _on_summarize(self) -> None:
+        try:
+            text = await self._summarizer.summarize(datetime.now(UTC))
+        except CostCapExceeded:
+            await self._send(StatusMsg(state="degraded", detail="cost cap reached"))
+            return
+        except Exception as exc:  # LLM/network failure must not kill the loop
+            log.exception("summary pass failed")
+            self._events.append("error", "", {"error": str(exc)[:200]})
+            await self._send(StatusMsg(state="degraded", detail="summary error"))
+            return
+        await self._send(SummaryMsg(text=text))
 
     async def _fire(self) -> None:
         try:
