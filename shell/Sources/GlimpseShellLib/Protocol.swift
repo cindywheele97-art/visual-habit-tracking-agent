@@ -70,6 +70,26 @@ public struct CopiedMsg: Codable {
     }
 }
 
+public struct RepliedMsg: Codable {
+    public var type = "replied"
+    public var suggestionId: String
+    public var regionId: String
+    public var mode: String
+
+    public init(suggestionId: String, regionId: String, mode: String) {
+        self.suggestionId = suggestionId
+        self.regionId = regionId
+        self.mode = mode
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case suggestionId = "suggestion_id"
+        case regionId = "region_id"
+        case mode
+    }
+}
+
 public struct ClickMsg: Codable {
     public var type = "click"
     public var ts: String

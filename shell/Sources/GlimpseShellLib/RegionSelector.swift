@@ -10,12 +10,18 @@ public enum ScreenCoords {
             width: rect.width, height: rect.height
         )
     }
+
+    /// Cocoa global point (origin bottom-left) → CG global point (origin top-left).
+    public static func cgPoint(fromCocoa p: CGPoint) -> CGPoint {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return CGPoint(x: p.x, y: primaryHeight - p.y)
+    }
 }
 
 /// Borderless windows refuse key status by default, which silently swallows
 /// every mouse event in the selection view — the overlay would render but
 /// never respond to a drag.
-private final class KeyableWindow: NSWindow {
+final class KeyableWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }

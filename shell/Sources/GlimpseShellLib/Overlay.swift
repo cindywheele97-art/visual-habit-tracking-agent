@@ -8,6 +8,9 @@ public final class OverlayModel: ObservableObject {
     @Published public var detail = ""
     @Published public var summary = ""
     public var onCopy: ((String) -> Void)?
+    @Published public var autoSendOn = false
+    @Published public var countdownRemaining: Int?
+    public var onAct: ((_ suggestionId: String, _ text: String) -> Void)?
 
     public init() {}
 }
@@ -59,6 +62,21 @@ public final class OverlayController {
             self.model.detail = detail
         }
     }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func showCountdown(remaining: Int) {
+        DispatchQueue.main.async { self.model.countdownRemaining = remaining }
+    }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func hideCountdown() {
+        DispatchQueue.main.async { self.model.countdownRemaining = nil }
+    }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func setAutoSend(_ on: Bool) {
+        DispatchQueue.main.async { self.model.autoSendOn = on }
+    }
 }
 
 struct OverlayView: View {
@@ -87,6 +105,15 @@ struct OverlayView: View {
                 }
                 Spacer()
             }
+            if let remaining = model.countdownRemaining {
+                Text("发送中 \(remaining)…  按 Esc 取消")
+                    .font(.system(size: 13)).bold()
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.red.opacity(0.85))
+                    .cornerRadius(6)
+            }
             if !model.summary.isEmpty {
                 Text("今日关注").font(.caption).bold().foregroundColor(.secondary)
                 Text(model.summary)
@@ -112,6 +139,9 @@ struct OverlayView: View {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(item.text, forType: .string)
                                 model.onCopy?(item.id)
+                            }
+                            Button(model.autoSendOn && !model.stale ? "发送" : "填入") {
+                                model.onAct?(item.id, item.text)
                             }
                         }
                         .padding(8)

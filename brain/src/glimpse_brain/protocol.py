@@ -53,6 +53,14 @@ class ClickMsg(BaseModel):
     blocks: list[Block]
 
 
+class RepliedMsg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["replied"] = "replied"
+    suggestion_id: str
+    region_id: str
+    mode: Literal["fill", "sent", "cancelled"]
+
+
 class SummarizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["summarize"] = "summarize"
@@ -91,7 +99,7 @@ class SummaryMsg(BaseModel):
     text: str
 
 
-InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest
+InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest | RepliedMsg
 OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg | SummaryMsg
 
 _INBOUND: TypeAdapter[InboundMsg] = TypeAdapter(

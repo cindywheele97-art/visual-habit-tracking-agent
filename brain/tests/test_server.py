@@ -184,6 +184,33 @@ async def test_summarize_request_returns_summary(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_replied_message_logged(tmp_path: Path) -> None:
+    # WHY: a feature that sends messages to real customers must leave a record of
+    # what was sent and how (fill/sent/cancelled). The audit line proves it.
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        _, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(
+            b'{"type":"replied","suggestion_id":"s1","region_id":"region-1","mode":"sent"}\n'
+        )
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        records = [
+            json.loads(line)
+            for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
+        ]
+        replied = [r for r in records if r["kind"] == "replied"]
+        assert len(replied) == 1
+        assert replied[0]["payload"]["mode"] == "sent"
+        assert replied[0]["payload"]["suggestion_id"] == "s1"
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
     # WHY: clicks must not disturb the OCR suggestion path, and a summarize
     # after both must still return — the highest-risk untested interaction.
