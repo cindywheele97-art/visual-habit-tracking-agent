@@ -149,6 +149,7 @@ class GlimpseServer:
             self._settle.poke()
 
     async def _on_summarize(self) -> None:
+        await self._send(StatusMsg(state="thinking"))  # immediate feedback on the menu click
         try:
             text = await self._summarizer.summarize(datetime.now(UTC))
         except CostCapExceeded:
