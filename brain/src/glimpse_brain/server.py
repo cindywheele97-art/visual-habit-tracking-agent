@@ -18,6 +18,7 @@ from glimpse_brain.protocol import (
     OcrMsg,
     OutboundMsg,
     ProtocolError,
+    RepliedMsg,
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
@@ -117,6 +118,12 @@ class GlimpseServer:
         elif isinstance(msg, CopiedMsg):
             self._events.append(
                 "suggestion_copied", msg.region_id, {"suggestion_id": msg.suggestion_id}
+            )
+        elif isinstance(msg, RepliedMsg):
+            self._events.append(
+                "replied",
+                msg.region_id,
+                {"suggestion_id": msg.suggestion_id, "mode": msg.mode},
             )
         elif isinstance(msg, ClickMsg):
             self._events.append(
