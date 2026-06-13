@@ -6,6 +6,7 @@ public final class OverlayModel: ObservableObject {
     @Published public var stale = false
     @Published public var status = "connecting"
     @Published public var detail = ""
+    @Published public var summary = ""
     public var onCopy: ((String) -> Void)?
 
     public init() {}
@@ -45,6 +46,13 @@ public final class OverlayController {
     }
 
     /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func showSummary(_ text: String) {
+        DispatchQueue.main.async {
+            self.model.summary = text
+        }
+    }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
     public func setStatus(_ state: String, detail: String) {
         DispatchQueue.main.async {
             self.model.status = state
@@ -78,6 +86,16 @@ struct OverlayView: View {
                         .background(Color.orange.opacity(0.3)).cornerRadius(3)
                 }
                 Spacer()
+            }
+            if !model.summary.isEmpty {
+                Text("今日关注").font(.caption).bold().foregroundColor(.secondary)
+                Text(model.summary)
+                    .font(.system(size: 13))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .background(Color.blue.opacity(0.08))
+                    .cornerRadius(6)
             }
             if model.items.isEmpty {
                 Text("等待新消息…").font(.callout).foregroundColor(.secondary)

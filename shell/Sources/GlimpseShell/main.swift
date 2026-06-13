@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let diffGate = DiffGate()
     private var ipc: IPCClient!
     private var selector: RegionSelector?
+    private var clickSensor: ClickSensor?
     // Capture-queue-confined: processFrame is the only reader/writer after
     // init. Do not read seq from main without hopping to the capture queue.
     private var seq = 0
@@ -28,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSMenuItem(title: "Select Region & Watch", action: #selector(selectRegion), keyEquivalent: "r")
         )
         menu.addItem(NSMenuItem(title: "Stop Watching", action: #selector(stopWatching), keyEquivalent: "."))
+        menu.addItem(
+            NSMenuItem(title: "Today's Interests", action: #selector(summarize), keyEquivalent: "t")
+        )
         menu.addItem(.separator())
         menu.addItem(
             NSMenuItem(title: "Quit Glimpse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -44,6 +48,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handle(message)
         }
         ipc.start()
+
+        let sensor = ClickSensor(allowlist: AppAllowlist(path: AppAllowlist.defaultPath)) { [weak self] msg in
+            self?.ipc.send(msg)
+        }
+        sensor.onPermissionNeeded = { [weak self] in
+            self?.overlay.setStatus("error", detail: "Accessibility needed for click tracking")
+        }
+        sensor.start()
+        clickSensor = sensor
 
         overlay.model.onCopy = { [weak self] suggestionId in
             guard let self else { return }
@@ -64,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let saved = RegionStore.load() {
             startWatching(region: saved)
         }
+    }
+
+    @objc private func summarize() {
+        ipc.send(SummarizeRequest())
     }
 
     @objc private func selectRegion() {
@@ -130,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .status(let msg):
             overlay.setStatus(msg.state, detail: msg.detail)
         case .summary(let msg):
-            overlay.setStatus("summary", detail: msg.text)
+            overlay.showSummary(msg.text)
         }
     }
 }
