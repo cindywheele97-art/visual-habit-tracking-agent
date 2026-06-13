@@ -43,6 +43,21 @@ class CopiedMsg(BaseModel):
     region_id: str
 
 
+class ClickMsg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["click"] = "click"
+    ts: str
+    app: str
+    x: float
+    y: float
+    blocks: list[Block]
+
+
+class SummarizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["summarize"] = "summarize"
+
+
 class AckMsg(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["ack"] = "ack"
@@ -70,8 +85,14 @@ class StatusMsg(BaseModel):
     detail: str = ""  # always on the wire; Swift mirror decodes non-optional
 
 
-InboundMsg = OcrMsg | HelloMsg | CopiedMsg
-OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg
+class SummaryMsg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["summary"] = "summary"
+    text: str
+
+
+InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest
+OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg | SummaryMsg
 
 _INBOUND: TypeAdapter[InboundMsg] = TypeAdapter(
     Annotated[InboundMsg, Field(discriminator="type")]

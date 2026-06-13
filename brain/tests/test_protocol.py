@@ -7,6 +7,7 @@ import pytest
 from glimpse_brain.protocol import (
     AckMsg,
     Block,
+    ClickMsg,
     CopiedMsg,
     HelloMsg,
     OcrMsg,
@@ -14,6 +15,8 @@ from glimpse_brain.protocol import (
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
+    SummarizeRequest,
+    SummaryMsg,
     parse_inbound,
     to_line,
 )
@@ -81,3 +84,30 @@ def test_defaults_always_serialized() -> None:
     assert '"stale":false' in line
     line = to_line(StatusMsg(state="watching"))
     assert '"detail":""' in line
+
+
+def test_click_roundtrip() -> None:
+    # WHY: click events carry the OCR'd text near the click — the raw material
+    # the summarizer interprets. Field names must match the Swift mirror.
+    msg = ClickMsg(
+        ts="2026-06-12T09:00:00Z",
+        app="com.google.Chrome",
+        x=120.5,
+        y=240.0,
+        blocks=[Block(text="Adidas Ultraboost", x0=0.1, x1=0.5, conf=0.9)],
+    )
+    parsed = parse_inbound(to_line(msg))
+    assert isinstance(parsed, ClickMsg)
+    assert parsed.app == "com.google.Chrome"
+    assert parsed.blocks[0].text == "Adidas Ultraboost"
+
+
+def test_summarize_request_parses() -> None:
+    assert isinstance(parse_inbound('{"type":"summarize"}'), SummarizeRequest)
+
+
+def test_summary_msg_serializes_single_line() -> None:
+    line = to_line(SummaryMsg(text="今天你看了 3 双 Adidas"))
+    assert line.endswith("\n") and "\n" not in line[:-1]
+    assert '"type":"summary"' in line
+    assert '"text":' in line
