@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
-import time
-from collections import deque
-from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
 
 from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
+from glimpse_brain.llm import AnthropicLLM, LLMClient, RateLimiter
 from glimpse_brain.redaction import Redactor
+
+__all__ = [
+    "AnthropicLLM",
+    "LLMClient",
+    "RateLimiter",
+    "Suggester",
+]
 
 SYSTEM_TEMPLATE = """\
 你是一名资深电商客服助手，为人工客服起草候选回复。
@@ -31,55 +35,6 @@ USER_TEMPLATE = """\
 
 为"我"起草最多 {n} 条候选回复。
 只输出一个 JSON 字符串数组，例如 ["...", "..."]，不要输出其他内容。"""
-
-
-class LLMClient(Protocol):
-    """Protocol for LLM clients."""
-
-    async def complete(self, *, system: str, user: str, model: str) -> str: ...
-
-
-class AnthropicLLM:
-    """Production client. Constructed lazily so tests never import anthropic."""
-
-    def __init__(self) -> None:
-        from anthropic import AsyncAnthropic
-
-        self._client = AsyncAnthropic(timeout=30.0)  # a stalled call must fail fast, not hang the UI
-
-    async def complete(self, *, system: str, user: str, model: str) -> str:
-        response = await self._client.messages.create(
-            model=model,
-            max_tokens=1024,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return "".join(
-            block.text for block in response.content if block.type == "text"
-        )
-
-
-class RateLimiter:
-    """Enforces max calls per minute with a sliding window."""
-
-    def __init__(
-        self, max_per_minute: int, clock: Callable[[], float] = time.monotonic
-    ) -> None:
-        self._max = max_per_minute
-        self._clock = clock
-        self._stamps: deque[float] = deque()
-
-    def allow(self) -> bool:
-        """Check if a call is allowed; if so, record a stamp and return True."""
-        now = self._clock()
-        while self._stamps and now - self._stamps[0] > 60.0:
-            self._stamps.popleft()
-        if len(self._stamps) >= self._max:
-            return False
-        # Stamp is recorded at allow-time, not on LLM success: a failing call
-        # still burns budget. Accepted for v1 — the window self-heals in 60s.
-        self._stamps.append(now)
-        return True
 
 
 class Suggester:
