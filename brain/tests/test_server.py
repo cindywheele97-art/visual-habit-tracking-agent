@@ -182,3 +182,44 @@ async def test_summarize_request_returns_summary(tmp_path: Path) -> None:
         writer.close()
     finally:
         task.cancel()
+
+
+async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
+    # WHY: clicks must not disturb the OCR suggestion path, and a summarize
+    # after both must still return — the highest-risk untested interaction.
+    cfg = make_config(tmp_path)
+
+    class BothLLM:
+        async def complete(self, *, system: str, user: str, model: str) -> str:
+            # suggester expects a JSON array; summarizer returns the raw string.
+            if "playbook" in system:
+                return '["好的，亲"]'
+            return "今天你在看 Adidas。"
+
+    server = GlimpseServer(cfg, llm=BothLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        # OCR → suggestion
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        # click mid-session
+        writer.write(CLICK_LINE.encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        # summarize still works
+        writer.write(b'{"type":"summarize"}\n')
+        await writer.drain()
+        msg = await read_until(reader, "summary")
+        assert msg["text"]
+        # the click was logged alongside the observation
+        kinds = [
+            json.loads(line)["kind"]
+            for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
+        ]
+        assert "click" in kinds and "observation" in kinds
+        writer.close()
+    finally:
+        task.cancel()

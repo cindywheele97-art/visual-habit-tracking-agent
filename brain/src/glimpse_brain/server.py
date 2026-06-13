@@ -45,12 +45,13 @@ class GlimpseServer:
             side_threshold=cfg.tracker.side_threshold,
             ignore_patterns=cfg.tracker.ignore_patterns,
         )
+        shared_limiter = RateLimiter(cfg.llm.max_calls_per_minute)
         self._suggester = Suggester(
             llm=llm if llm is not None else AnthropicLLM(),
             model=cfg.llm.model,
             playbook_path=Path(cfg.brain.playbook),
             redactor=self._redactor,
-            limiter=RateLimiter(cfg.llm.max_calls_per_minute),
+            limiter=shared_limiter,
             max_suggestions=cfg.llm.max_suggestions,
         )
         self._summarizer = Summarizer(
@@ -58,12 +59,13 @@ class GlimpseServer:
             model=cfg.llm.model,
             event_log=Path(cfg.brain.event_log),
             redactor=self._redactor,
-            limiter=RateLimiter(cfg.llm.max_calls_per_minute),
+            limiter=shared_limiter,
         )
         self._settle: SettleGate | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._send_lock = asyncio.Lock()
         self._region_id = ""
+        self._summarizing = False
 
     async def run(self) -> None:
         socket_path = Path(self._cfg.brain.socket_path)
@@ -124,6 +126,7 @@ class GlimpseServer:
                     "app": msg.app,
                     "x": msg.x,
                     "y": msg.y,
+                    "ts": msg.ts,
                     "texts": [b.text for b in msg.blocks],
                 },
             )
@@ -149,18 +152,24 @@ class GlimpseServer:
             self._settle.poke()
 
     async def _on_summarize(self) -> None:
-        await self._send(StatusMsg(state="thinking"))  # immediate feedback on the menu click
+        if self._summarizing:
+            return
+        self._summarizing = True
         try:
-            text = await self._summarizer.summarize(datetime.now(UTC))
-        except CostCapExceeded:
-            await self._send(StatusMsg(state="degraded", detail="cost cap reached"))
-            return
-        except Exception as exc:  # LLM/network failure must not kill the loop
-            log.exception("summary pass failed")
-            self._events.append("error", "", {"error": str(exc)[:200]})
-            await self._send(StatusMsg(state="degraded", detail="summary error"))
-            return
-        await self._send(SummaryMsg(text=text))
+            await self._send(StatusMsg(state="thinking"))  # immediate feedback on the menu click
+            try:
+                text = await self._summarizer.summarize(datetime.now(UTC))
+            except CostCapExceeded:
+                await self._send(StatusMsg(state="degraded", detail="cost cap reached"))
+                return
+            except Exception as exc:  # LLM/network failure must not kill the loop
+                log.exception("summary pass failed")
+                self._events.append("error", "", {"error": str(exc)[:200]})
+                await self._send(StatusMsg(state="degraded", detail="summary error"))
+                return
+            await self._send(SummaryMsg(text=text))
+        finally:
+            self._summarizing = False
 
     async def _fire(self) -> None:
         try:
