@@ -164,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         autoSendEnabled.toggle()
         item.state = autoSendEnabled ? .on : .off
         overlay.setAutoSend(autoSendEnabled)
+        // Kill-switch: turning auto-send off must abort any countdown already
+        // in flight, not just affect future sends.
+        if !autoSendEnabled { sender.cancelPendingSend() }
     }
 
     /// Ticks the countdown once per second, mirrors it into the overlay banner,
@@ -178,7 +181,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {
                 self?.sender.cancelPendingSend()
-                self?.overlay.hideCountdown()  // crisp abort: don't wait for the next tick
+                self?.tearDownCountdown()  // crisp abort: stop the timer/monitors now
+                self?.overlay.hideCountdown()
                 return nil
             }
             return event
@@ -186,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {
                 self?.sender.cancelPendingSend()
+                self?.tearDownCountdown()
                 self?.overlay.hideCountdown()
             }
         }

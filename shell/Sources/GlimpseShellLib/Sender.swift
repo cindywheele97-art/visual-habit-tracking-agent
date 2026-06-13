@@ -50,6 +50,10 @@ public final class Sender {
         case .refuse(let reason):
             presentRefusal(reason)
         case .fill:
+            // A fill supersedes any in-flight auto-send: if the user started an
+            // auto-send then switched to fill-only (toggle off, or stale), the
+            // old countdown must not later fire Return behind their back.
+            cancelPendingSend()
             fill(text)
             emitReplied(suggestionId, "fill")
         case .fillThenSend:

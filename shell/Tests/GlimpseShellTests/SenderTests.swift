@@ -100,6 +100,24 @@ func secondAutoSendSupersedesAndCancelsThePrevious() throws {
 }
 
 @Test
+func fillSupersedesAnInFlightAutoSend() throws {
+    // The kill-switch / fill-after-auto-send case: user starts an auto-send, then
+    // switches to fill-only (toggle off → stale, or just fills another card). The
+    // pending send MUST be cancelled so it can never fire Return behind their back.
+    let h = Harness()
+    h.sender.handle(suggestionId: "auto", text: "好的", autoSendOn: true, stale: false)
+    let pending = try #require(h.capturedCountdown)
+    h.sender.handle(suggestionId: "manual", text: "你好", autoSendOn: false, stale: false)
+    #expect(h.replied.contains { $0 == ("auto", "cancelled") })
+    #expect(h.replied.contains { $0 == ("manual", "fill") })
+
+    // Even if a stale timer keeps ticking the superseded countdown, it must not send.
+    for _ in 0..<Countdown.defaultSeconds { pending.tick() }
+    #expect(h.mock.returns == 0)
+    #expect(!h.replied.contains { $0 == ("auto", "sent") })
+}
+
+@Test
 func refusalPostsNoEventsAndSurfacesReason() {
     let h = Harness()
     h.frontmostAllowed = false
