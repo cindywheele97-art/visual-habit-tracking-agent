@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import GlimpseShellLib
@@ -108,4 +109,24 @@ func decodeSummaryFromBrain() throws {
         return
     }
     #expect(msg.text == "今天你在看 Adidas")
+}
+
+@Test
+func repliedMsgEncodesSnakeCaseWire() throws {
+    let data = try Wire.encodeLine(RepliedMsg(suggestionId: "s1", regionId: "region-1", mode: "sent"))
+    let line = String(data: data, encoding: .utf8)!
+    #expect(line.contains("\"type\":\"replied\""))
+    #expect(line.contains("\"suggestion_id\":\"s1\""))
+    #expect(line.contains("\"region_id\":\"region-1\""))
+    #expect(line.contains("\"mode\":\"sent\""))
+    #expect(line.hasSuffix("\n"))
+}
+
+@Test
+func cgPointFlipsCocoaYToTopLeftOrigin() {
+    // Primary screen height H: a Cocoa point (x, y) maps to CG (x, H - y).
+    let h = NSScreen.screens.first?.frame.height ?? 0
+    let cg = ScreenCoords.cgPoint(fromCocoa: CGPoint(x: 100, y: 100))
+    #expect(cg.x == 100)
+    #expect(cg.y == h - 100)
 }
