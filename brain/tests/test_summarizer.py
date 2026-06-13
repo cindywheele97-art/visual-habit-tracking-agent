@@ -122,3 +122,33 @@ async def test_non_click_kinds_ignored(tmp_path: Path) -> None:
     blob = llm.calls[0]["user"] + llm.calls[0]["system"]
     assert "REAL CLICK" in blob
     assert "NOISE" not in blob
+
+
+async def test_naive_timestamp_does_not_crash(tmp_path: Path) -> None:
+    # WHY: an external/hand-written log line with a tz-naive ts must be handled,
+    # not crash the whole summary with a naive-vs-aware comparison TypeError.
+    log = tmp_path / "events.jsonl"
+    _write(log, [
+        {"ts": "2026-06-12T09:00:00", "kind": "click", "region_id": "",
+         "payload": {"app": "com.google.Chrome", "x": 1.0, "y": 2.0, "texts": ["NAIVE TS ITEM"]}},
+    ])
+    llm = FakeLLM()
+    s = make_summarizer(tmp_path, llm, log)
+    await s.summarize(NOW)  # must not raise
+    assert llm.calls  # item was in-window and LLM was called
+
+
+async def test_digest_capped_per_app(tmp_path: Path) -> None:
+    # WHY: a heavy day must not blow the token budget; only recent N snippets listed.
+    log = tmp_path / "events.jsonl"
+    _write(log, [
+        _click("2026-06-12T09:00:00Z", "com.google.Chrome", [f"ITEM{i}"])
+        for i in range(120)
+    ])
+    llm = FakeLLM()
+    s = make_summarizer(tmp_path, llm, log)
+    await s.summarize(NOW)
+    blob = llm.calls[0]["system"] + llm.calls[0]["user"]
+    assert "ITEM119" in blob       # most recent kept
+    assert "ITEM0" not in blob      # oldest dropped (cap = 50)
+    assert "(120 次点击)" in blob   # true total still reported

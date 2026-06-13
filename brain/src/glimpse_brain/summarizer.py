@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from glimpse_brain.errors import CostCapExceeded
@@ -11,6 +11,7 @@ from glimpse_brain.llm import LLMClient, RateLimiter
 from glimpse_brain.redaction import Redactor
 
 NO_ACTIVITY = "今天还没有追踪到任何活动。"
+MAX_CLICKS_PER_APP = 50  # bound the digest so a heavy day can't blow the token budget
 
 SYSTEM = """\
 你是一个帮助用户回顾自己浏览/点击行为的助手。
@@ -78,8 +79,9 @@ class Summarizer:
             return ""
         lines: list[str] = []
         for app, items in by_app.items():
+            recent = items[-MAX_CLICKS_PER_APP:]
             lines.append(f"[{app}] ({len(items)} 次点击)")
-            lines.extend(f"  - {item}" for item in items)
+            lines.extend(f"  - {item}" for item in recent)
         return "\n".join(lines)
 
     def _read_clicks_since(self, cutoff: datetime) -> list[dict[str, object]]:
@@ -103,6 +105,8 @@ class Summarizer:
                 ts = datetime.fromisoformat(ts_raw)
             except ValueError:
                 continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
             if ts >= cutoff:
                 out.append(record)
         return out
