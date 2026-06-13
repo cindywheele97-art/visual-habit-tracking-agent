@@ -96,3 +96,35 @@ A summary of what you looked at appears in the overlay.
    few seconds, naming things you actually clicked.
 6. Confirm no image files under `~/.glimpse/` and no phone numbers / long digit runs
    in the click lines (redaction).
+
+## Phase 3 — auto-reply (synthetic input into WeChat)
+
+Glimpse can fill or send a reply directly into WeChat's chat input box.
+You calibrate the box position once; from then on suggestion cards have a
+**填入 / 发送** button governed by an off-by-default **自动发送** toggle.
+
+### Setup
+
+WeChat's bundle ID must already be in `~/.glimpse/allowlist.json` (the same
+list used for click-capture). Accessibility permission is also required (same
+grant as Phase 2).
+
+### E2E smoke (run by a human)
+
+1. Menu 👁 → **设置输入框位置**, then click WeChat's message input box.
+   Status shows "输入框已设置".
+2. With auto-send **OFF** (default): pick a suggestion, click **填入**.
+   - Expect: the reply text appears in WeChat's input box; nothing is sent.
+3. Wrong-app refusal: bring another app to the front, click **填入**.
+   - Expect: status shows "切换到微信再发送"; nothing is typed.
+4. Enable menu 👁 → **自动发送**. The card button now reads **发送** (unless the
+   suggestion is stale, where it stays **填入**).
+5. Click **发送** with WeChat frontmost.
+   - Expect: text fills, a red "发送中 5…4…3…2…1 按 Esc 取消" banner counts down,
+     then Return is pressed and the message sends.
+6. Repeat step 5 but press **Esc** during the countdown.
+   - Expect: countdown aborts, message NOT sent, text left in the box.
+7. Repeat step 5 but ⌘-Tab away before the countdown ends.
+   - Expect: at zero, the send aborts (frontmost re-check); message NOT sent.
+8. Confirm `~/.glimpse/events.jsonl` has `replied` records with modes
+   `fill` / `sent` / `cancelled` matching the actions above.
