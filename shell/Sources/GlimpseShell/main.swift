@@ -3,6 +3,16 @@ import CoreVideo
 import Foundation
 import GlimpseShellLib
 
+/// Watch flags confined to the main run loop: written via main-queue hops from
+/// the capture queue, read by the watchdog Timer on main. All access is on the
+/// main thread, which is what makes the @unchecked Sendable conformance safe —
+/// holding them here lets the background→main hops capture this small object
+/// instead of the whole (non-Sendable) AppDelegate.
+private final class WatchFlags: @unchecked Sendable {
+    var watching = false
+    var lastEmptyOcr: Date?
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let overlay = OverlayController()
@@ -16,10 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var seq = 0
     private let regionId = "region-1"
     private let isoFormatter = ISO8601DateFormatter()
-    // Main-thread-confined: written via DispatchQueue.main, read by the
-    // watchdog timer (main runloop). Do not touch from other threads.
-    private var watching = false
-    private var lastEmptyOcr: Date?
+    // Main-run-loop-confined watch flags (see WatchFlags).
+    private let flags = WatchFlags()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -68,7 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // text for 2 minutes → the watched window probably closed or moved.
         // A static-but-alive chat sends no frames at all, so it never trips this.
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            guard let self, self.watching, let emptySince = self.lastEmptyOcr else { return }
+            guard let self, self.flags.watching, let emptySince = self.flags.lastEmptyOcr
+            else { return }
             if Date().timeIntervalSince(emptySince) > 120 {
                 self.overlay.setStatus("degraded", detail: "region looks dead — reselect?")
             }
@@ -93,12 +102,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopWatching() {
-        watching = false
+        flags.watching = false
         Task { await capture.stop() }
         overlay.setStatus("stopped", detail: "")
     }
 
     private func startWatching(region: CGRect) {
+        let flags = self.flags
         Task {
             do {
                 try await capture.start(region: region) { [weak self] pixelBuffer in
@@ -107,8 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Task{} runs on the cooperative pool, not main — hop before
                 // touching the main-confined flags the watchdog reads.
                 DispatchQueue.main.async {
-                    self.watching = true
-                    self.lastEmptyOcr = nil
+                    flags.watching = true
+                    flags.lastEmptyOcr = nil
                 }
                 self.overlay.setStatus("watching", detail: "")
             } catch {
@@ -119,17 +129,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Runs on the capture queue (not main): diff gate → OCR → IPC.
     private func processFrame(_ pixelBuffer: CVPixelBuffer) {
+        let flags = self.flags
         let samples = Diff.sample(pixelBuffer)
         guard diffGate.isChanged(samples) else { return }
         guard let image = ImageUtil.cgImage(from: pixelBuffer) else { return }
         let blocks = (try? OCR.recognize(image)) ?? []
         if blocks.isEmpty {
             DispatchQueue.main.async {
-                if self.lastEmptyOcr == nil { self.lastEmptyOcr = Date() }
+                if flags.lastEmptyOcr == nil { flags.lastEmptyOcr = Date() }
             }
             return
         }
-        DispatchQueue.main.async { self.lastEmptyOcr = nil }
+        DispatchQueue.main.async { flags.lastEmptyOcr = nil }
         seq += 1
         let message = OcrMsg(
             seq: seq, ts: isoFormatter.string(from: Date()),
