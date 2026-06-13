@@ -12,6 +12,7 @@ from glimpse_brain.protocol import (
     HelloMsg,
     OcrMsg,
     ProtocolError,
+    RepliedMsg,
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
@@ -111,3 +112,20 @@ def test_summary_msg_serializes_single_line() -> None:
     assert line.endswith("\n") and "\n" not in line[:-1]
     assert '"type":"summary"' in line
     assert '"text":' in line
+
+
+def test_replied_roundtrip() -> None:
+    # WHY: the shell reports each fill/send so the brain keeps an audit trail of
+    # actions taken on real people. mode is a closed set — typos must fail loud.
+    msg = RepliedMsg(suggestion_id="s1", region_id="region-1", mode="sent")
+    parsed = parse_inbound(to_line(msg))
+    assert isinstance(parsed, RepliedMsg)
+    assert parsed.suggestion_id == "s1"
+    assert parsed.mode == "sent"
+
+
+def test_replied_rejects_unknown_mode() -> None:
+    with pytest.raises(ProtocolError):
+        parse_inbound(
+            '{"type":"replied","suggestion_id":"s1","region_id":"r","mode":"bogus"}'
+        )
