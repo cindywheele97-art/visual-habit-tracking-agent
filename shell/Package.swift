@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "GlimpseShell",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     targets: [
         .target(
             name: "GlimpseShellLib",
