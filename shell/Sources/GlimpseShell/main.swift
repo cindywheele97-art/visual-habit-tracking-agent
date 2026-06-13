@@ -129,6 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.update(items: msg.items, stale: msg.stale)
         case .status(let msg):
             overlay.setStatus(msg.state, detail: msg.detail)
+        case .summary(let msg):
+            overlay.setStatus("summary", detail: msg.text)
         }
     }
 }

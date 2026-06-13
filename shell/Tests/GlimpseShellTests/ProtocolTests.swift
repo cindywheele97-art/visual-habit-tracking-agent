@@ -81,3 +81,31 @@ func lineBufferSplitsAndKeepsPartial() {
     #expect(lines.count == 1)
     #expect(String(data: lines[0], encoding: .utf8) == "{\"b\":2}")
 }
+
+@Test
+func clickMsgEncodesSnakeCaseAndType() throws {
+    let msg = ClickMsg(
+        ts: "2026-06-12T09:00:00Z", app: "com.google.Chrome", x: 12.0, y: 34.0,
+        blocks: [Block(text: "Adidas", x0: 0.1, x1: 0.5, conf: 0.9)]
+    )
+    let json = String(data: try Wire.encodeLine(msg), encoding: .utf8)!
+    #expect(json.contains("\"type\":\"click\""))
+    #expect(json.contains("\"app\":\"com.google.Chrome\""))
+    #expect(json.contains("\"text\":\"Adidas\""))
+}
+
+@Test
+func summarizeRequestEncodesType() throws {
+    let json = String(data: try Wire.encodeLine(SummarizeRequest()), encoding: .utf8)!
+    #expect(json.contains("\"type\":\"summarize\""))
+}
+
+@Test
+func decodeSummaryFromBrain() throws {
+    let line = #"{"type":"summary","text":"今天你在看 Adidas"}"#
+    guard case .summary(let msg)? = Wire.decodeBrainMessage(Data(line.utf8)) else {
+        #expect(Bool(false), "expected summary")
+        return
+    }
+    #expect(msg.text == "今天你在看 Adidas")
+}

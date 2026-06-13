@@ -70,6 +70,37 @@ public struct CopiedMsg: Codable {
     }
 }
 
+public struct ClickMsg: Codable {
+    public var type = "click"
+    public var ts: String
+    public var app: String
+    public var x: Double
+    public var y: Double
+    public var blocks: [Block]
+
+    public init(ts: String, app: String, x: Double, y: Double, blocks: [Block]) {
+        self.ts = ts
+        self.app = app
+        self.x = x
+        self.y = y
+        self.blocks = blocks
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, ts, app, x, y, blocks
+    }
+}
+
+public struct SummarizeRequest: Codable {
+    public var type = "summarize"
+
+    public init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case type
+    }
+}
+
 public struct AckMsg: Codable {
     // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
     public var seq: Int
@@ -119,10 +150,20 @@ public struct StatusMsg: Codable {
     }
 }
 
+public struct SummaryMsg: Codable {
+    // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+}
+
 public enum BrainMessage {
     case ack(AckMsg)
     case suggestions(SuggestionsMsg)
     case status(StatusMsg)
+    case summary(SummaryMsg)
 }
 
 // MARK: - Wire encoding
@@ -150,6 +191,8 @@ public enum Wire {
             return (try? decoder.decode(SuggestionsMsg.self, from: line)).map(BrainMessage.suggestions)
         case "status":
             return (try? decoder.decode(StatusMsg.self, from: line)).map(BrainMessage.status)
+        case "summary":
+            return (try? decoder.decode(SummaryMsg.self, from: line)).map(BrainMessage.summary)
         default:
             return nil
         }
