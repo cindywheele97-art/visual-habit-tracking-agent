@@ -8,3 +8,5 @@ __pycache__/
 .swiftpm/
 .DS_Store
 data/
+# Personal launchers (may reference local key paths) — keep out of the repo.
+scripts/*.local.sh
