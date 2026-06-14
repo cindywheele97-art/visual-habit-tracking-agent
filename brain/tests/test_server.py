@@ -9,6 +9,7 @@ import pytest
 
 from glimpse_brain.config import Config
 from glimpse_brain.server import GlimpseServer
+from glimpse_brain.tooluse import AgentStep
 
 OCR_LINE = (
     '{"type":"ocr","seq":%d,"ts":"2026-06-11T12:00:00Z","region_id":"region-1",'
@@ -19,6 +20,13 @@ OCR_LINE = (
 class FakeLLM:
     async def complete(self, *, system: str, user: str, model: str) -> str:
         return '["好的，亲，马上处理"]'
+
+
+class FakeToolClient:
+    """Always finalizes immediately with two drafts (no tool calls)."""
+
+    async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+        return AgentStep(final_text='["好的，亲，马上处理", "请稍等哦"]')
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -52,7 +60,7 @@ async def read_until(
 
 async def test_happy_path_and_no_duplicate_suggestions(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
-    server = GlimpseServer(cfg, llm=FakeLLM())
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
     task = asyncio.create_task(server.run())
     await asyncio.sleep(0.05)
     try:
@@ -92,7 +100,7 @@ async def test_reconnect_does_not_cancel_new_connections_settle(tmp_path: Path) 
     # If it cancels the new connection's gate, a reconnect racing a pending
     # suggestion silently kills suggestions — no crash, just loss.
     cfg = make_config(tmp_path)
-    server = GlimpseServer(cfg, llm=FakeLLM())
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
     task = asyncio.create_task(server.run())
     await asyncio.sleep(0.05)
     try:
@@ -223,7 +231,7 @@ async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
                 return '["好的，亲"]'
             return "今天你在看 Adidas。"
 
-    server = GlimpseServer(cfg, llm=BothLLM())
+    server = GlimpseServer(cfg, llm=BothLLM(), tool_client=FakeToolClient())
     task = asyncio.create_task(server.run())
     await asyncio.sleep(0.05)
     try:
@@ -247,6 +255,32 @@ async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
             for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
         ]
         assert "click" in kinds and "observation" in kinds
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> None:
+    # WHY: the agent replaces the suggester on the suggestion path and its turn
+    # is auditable (tools used + draft count) without leaking draft content.
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        sug = await read_until(reader, "suggestions")
+        assert sug["items"][0]["text"] == "好的，亲，马上处理"
+        kinds = [
+            json.loads(line)["kind"]
+            for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
+        ]
+        assert "agent_turn" in kinds
         writer.close()
     finally:
         task.cancel()
