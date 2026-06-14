@@ -7,13 +7,15 @@ from dataclasses import dataclass
 
 from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.knowledge import KnowledgeBase
-from glimpse_brain.suggester import RateLimiter, _parse_suggestions
+from glimpse_brain.parsing import parse_suggestions
+from glimpse_brain.suggester import RateLimiter
 from glimpse_brain.tools import KnowledgeBaseTool, Tool
 from glimpse_brain.tooluse import (
     AgentStep,
     ToolResult,
     ToolResultsMessage,
     ToolUseClient,
+    TranscriptEntry,
     UserMessage,
 )
 from glimpse_brain.redaction import Redactor
@@ -59,7 +61,7 @@ class Agent:
         if not self._limiter.allow():
             raise CostCapExceeded("agent turn rate cap reached")
         conversation = self._redactor.redact("\n".join(tail))
-        transcript: list = [
+        transcript: list[TranscriptEntry] = [
             UserMessage(text=USER_TEMPLATE.format(conversation=conversation, n=self._max))
         ]
         tools_used: list[str] = []
@@ -69,7 +71,7 @@ class Agent:
             )
             if step.final_text is not None:
                 return AgentResult(
-                    drafts=_parse_suggestions(step.final_text, self._max),
+                    drafts=parse_suggestions(step.final_text, self._max),
                     tools_used=tools_used,
                 )
             transcript.append(step)
@@ -77,11 +79,13 @@ class Agent:
             for call in step.tool_calls:
                 tools_used.append(call.name)
                 tool = self._registry.get(call.name)
-                output = (
-                    await tool.run(call.input)
-                    if tool is not None
-                    else f"unknown tool: {call.name}"
-                )
+                if tool is None:
+                    output = f"unknown tool: {call.name}"
+                else:
+                    try:
+                        output = await tool.run(call.input)
+                    except Exception as exc:  # a tool failure must not kill the pass
+                        output = f"tool error: {exc}"
                 results.append(ToolResult(id=call.id, output=output))
             transcript.append(ToolResultsMessage(results=tuple(results)))
         raise SuggestionParseError("agent did not finalize within max_iterations")

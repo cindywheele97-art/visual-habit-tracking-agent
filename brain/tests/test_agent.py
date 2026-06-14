@@ -58,6 +58,27 @@ async def test_agent_calls_tool_then_finalizes() -> None:
     assert client.last_transcript_len == 3
 
 
+async def test_agent_tolerates_tool_failure_and_recovers() -> None:
+    # WHY: a tool raising (I/O/network) must not kill the suggestion pass — the
+    # error is fed back so the model can still finalize a best-effort draft.
+    class BoomKB:
+        def grounding(self, query: str) -> str:
+            raise RuntimeError("kb down")
+
+    client = ScriptedClient([
+        AgentStep(tool_calls=(ToolCall(id="t1", name="knowledge_base", input={}),)),
+        AgentStep(final_text='["稍等，我帮您确认一下"]'),
+    ])
+    agent = Agent(
+        client=client, system="SYS", knowledge=BoomKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4,
+    )
+    result = await agent.suggest(["客户: 在吗"])
+    assert result.drafts == ["稍等，我帮您确认一下"]
+    assert result.tools_used == ["knowledge_base"]
+
+
 async def test_agent_finalizes_without_tools() -> None:
     client = ScriptedClient([AgentStep(final_text='["在的，亲"]')])
     result = await make_agent(client).suggest(["客户: 在吗"])

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
+from glimpse_brain.errors import CostCapExceeded
 from glimpse_brain.llm import AnthropicLLM, LLMClient, RateLimiter
+from glimpse_brain.parsing import parse_suggestions
 from glimpse_brain.redaction import Redactor
 
 __all__ = [
@@ -85,30 +85,4 @@ class Suggester:
             user=USER_TEMPLATE.format(conversation=conversation, n=self._max),
             model=self._model,
         )
-        return _parse_suggestions(raw, self._max)
-
-
-def _parse_suggestions(raw: str, limit: int) -> list[str]:
-    """Extract and validate suggestions from LLM output.
-
-    Looks for a JSON array in the output, validates it contains strings,
-    and returns up to `limit` items.
-
-    Raises:
-        SuggestionParseError: If JSON cannot be found or parsed.
-    """
-    # Known limitation: if the model emits TWO arrays separated by prose, the
-    # first-'['..last-']' slice spans the prose and json.loads fails — which
-    # surfaces as SuggestionParseError and degrades gracefully upstream.
-    start = raw.find("[")
-    end = raw.rfind("]")
-    if start == -1 or end <= start:
-        raise SuggestionParseError(raw[:200])
-    try:
-        data = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise SuggestionParseError(str(exc)) from exc
-    items = [s.strip() for s in data if isinstance(s, str) and s.strip()]
-    if not items:
-        raise SuggestionParseError("no usable strings in LLM output")
-    return items[:limit]
+        return parse_suggestions(raw, self._max)
