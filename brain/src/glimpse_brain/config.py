@@ -25,6 +25,7 @@ class LlmCfg(BaseModel):
     model: str = "claude-sonnet-4-6"
     max_calls_per_minute: int = Field(default=6, ge=1)
     max_suggestions: int = Field(default=3, ge=1, le=5)
+    max_iterations: int = Field(default=4, ge=1, le=10)
 
 
 class TrackerCfg(BaseModel):

@@ -50,3 +50,17 @@ def test_malformed_toml_names_the_file(tmp_path: Path) -> None:
     toml.write_text("[tracker\nsettle_ms = 1", encoding="utf-8")
     with pytest.raises(ValueError, match="broken.toml"):
         load_config(toml)
+
+
+def test_llm_cfg_has_max_iterations_default() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.llm.max_iterations == 4
+
+
+def test_llm_cfg_max_iterations_overridable() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config.model_validate({"llm": {"max_iterations": 6}})
+    assert cfg.llm.max_iterations == 6
