@@ -31,7 +31,7 @@ from glimpse_brain.redaction import Redactor
 from glimpse_brain.settle import SettleGate
 from glimpse_brain.agent import Agent
 from glimpse_brain.knowledge import FileKnowledgeBase
-from glimpse_brain.suggester import AnthropicLLM, LLMClient, RateLimiter
+from glimpse_brain.llm import AnthropicLLM, LLMClient, RateLimiter
 from glimpse_brain.tooluse import AnthropicToolUseClient, ToolUseClient
 from glimpse_brain.summarizer import Summarizer
 from glimpse_brain.tracker import ConversationTracker

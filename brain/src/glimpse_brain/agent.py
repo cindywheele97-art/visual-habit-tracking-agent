@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.knowledge import KnowledgeBase
 from glimpse_brain.parsing import parse_suggestions
-from glimpse_brain.suggester import RateLimiter
+from glimpse_brain.llm import RateLimiter
 from glimpse_brain.tools import KnowledgeBaseTool, Tool
 from glimpse_brain.tooluse import (
     AgentStep,

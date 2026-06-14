@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from glimpse_brain.knowledge import KnowledgeBase
 from glimpse_brain.tools import KnowledgeBaseTool
 
 
