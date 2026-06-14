@@ -109,3 +109,28 @@ async def test_judge_drafts_uses_client_and_focus() -> None:
         rubric_focus=["grounded"],
     )
     assert verdicts == {"grounded": True}
+
+
+async def test_run_case_combines_deterministic_and_judge() -> None:
+    from glimpse_brain.evals_pkg.harness import EvalCase
+    from glimpse_brain.evals_pkg.runner import run_case
+
+    case = EvalCase(
+        id="x", conversation=["客户: 包邮吗"], rubric_focus=["grounded"],
+        must=["包邮"], must_not=[], notes="",
+    )
+
+    class FakeAgent:
+        async def suggest(self, tail):
+            from glimpse_brain.agent import AgentResult
+            return AgentResult(drafts=["亲，满99包邮"], tools_used=["knowledge_base"])
+
+    class FakeJudgeClient:
+        async def complete(self, *, system, user, model) -> str:
+            return '{"grounded": true}'
+
+    row = await run_case(case, agent=FakeAgent(), judge_client=FakeJudgeClient(), model="m")
+    assert row["id"] == "x"
+    assert row["deterministic_passed"] is True
+    assert row["judge"] == {"grounded": True}
+    assert row["tools_used"] == ["knowledge_base"]

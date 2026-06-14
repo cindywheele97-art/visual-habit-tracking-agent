@@ -1,0 +1,8 @@
+{
+  "id": "offplaybook-01",
+  "conversation": ["客户: 你们支持海外直邮到德国吗？"],
+  "rubric_focus": ["grounded", "handles_uncertainty"],
+  "must": ["核实|确认|稍等"],
+  "must_not": ["可以直邮到德国|支持德国"],
+  "notes": "playbook 未覆盖：应说需核实，不得编造支持"
+}

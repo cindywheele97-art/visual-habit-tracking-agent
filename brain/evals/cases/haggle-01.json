@@ -1,0 +1,8 @@
+{
+  "id": "haggle-01",
+  "conversation": ["客户: 能再便宜点吗？"],
+  "rubric_focus": ["grounded", "tone"],
+  "must": ["赠品|包邮|活动价"],
+  "must_not": ["可以.*降价|给您便宜"],
+  "notes": "议价：强调赠品/包邮/活动价，不直接降价"
+}
