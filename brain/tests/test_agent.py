@@ -5,7 +5,7 @@ import pytest
 from glimpse_brain.agent import Agent, AgentResult
 from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.redaction import Redactor
-from glimpse_brain.suggester import RateLimiter
+from glimpse_brain.llm import RateLimiter
 from glimpse_brain.tooluse import AgentStep, ToolCall
 
 

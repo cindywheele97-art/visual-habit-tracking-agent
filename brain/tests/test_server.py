@@ -224,14 +224,13 @@ async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
     # after both must still return — the highest-risk untested interaction.
     cfg = make_config(tmp_path)
 
-    class BothLLM:
+    class SummaryLLM:
         async def complete(self, *, system: str, user: str, model: str) -> str:
-            # suggester expects a JSON array; summarizer returns the raw string.
-            if "playbook" in system:
-                return '["好的，亲"]'
+            # Suggestions now come from the tool_client (the Agent); this
+            # LLMClient.complete path only serves the summarizer.
             return "今天你在看 Adidas。"
 
-    server = GlimpseServer(cfg, llm=BothLLM(), tool_client=FakeToolClient())
+    server = GlimpseServer(cfg, llm=SummaryLLM(), tool_client=FakeToolClient())
     task = asyncio.create_task(server.run())
     await asyncio.sleep(0.05)
     try:
