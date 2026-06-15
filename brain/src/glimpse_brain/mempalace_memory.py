@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from glimpse_brain.memory import MemoryHit
@@ -56,6 +56,9 @@ class MemPalaceMemory:
         self._palace = str(palace_path)
         self._embedding_model = embedding_model
         Path(palace_path).mkdir(parents=True, exist_ok=True)
+        # NOTE: process-global side effect — MemPalace 3.4.0 selects the embedder only via
+        # this env var (no per-collection lever).
+        os.environ.setdefault("MEMPALACE_EMBEDDING_MODEL", self._embedding_model)
 
     # ------------------------------------------------------------------
     # Public async interface (Memory Protocol)
@@ -108,29 +111,22 @@ class MemPalaceMemory:
           id_recipe            — "v2", mirrors make_drawer_id_from_content
           added_by             — provenance tag
         """
-        # Set the model env var before opening the collection so the backend's
-        # _resolve_embedding_function picks it up. Must happen before the first
-        # get_collection call for this palace; noop on subsequent calls because
-        # the EF is cached per (model, providers) tuple in embedding._EF_CACHE.
-        os.environ.setdefault("MEMPALACE_EMBEDDING_MODEL", self._embedding_model)
-
         from mempalace.ids import ID_RECIPE, make_drawer_id_from_content
-        from mempalace.miner import NORMALIZE_VERSION
-        from mempalace.palace import get_collection
+        from mempalace.palace import NORMALIZE_VERSION, get_collection
 
         wing = _safe_wing(customer)
-        room = kind
 
         collection = get_collection(self._palace, create=True)
 
-        drawer_id = make_drawer_id_from_content(wing, room, content)
+        drawer_id = make_drawer_id_from_content(wing, kind, content)
+        # Metadata schema verified against mempalace 3.4.0 (miner._build_drawer_metadata).
         metadata: dict[str, str | int | float] = {
             "wing": wing,
-            "room": room,
+            "room": kind,
             "source_file": _SYNTHETIC_SOURCE,
             "chunk_index": 0,
             "added_by": "glimpse_brain",
-            "filed_at": datetime.now().isoformat(),
+            "filed_at": datetime.now(UTC).isoformat(),
             "normalize_version": NORMALIZE_VERSION,
             "id_recipe": ID_RECIPE,
         }
