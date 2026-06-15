@@ -128,3 +128,16 @@ grant as Phase 2).
    - Expect: at zero, the send aborts (frontmost re-check); message NOT sent.
 8. Confirm `~/.glimpse/events.jsonl` has `replied` records with modes
    `fill` / `sent` / `cancelled` matching the actions above.
+
+## Phase 4 — agentic core (evals)
+
+The brain now drafts replies via a Claude tool-use agent (`glimpse_brain.agent.Agent`)
+instead of a single LLM call. Quality is guarded by an offline, billable eval
+suite (NOT part of `pytest`, since it makes real model calls):
+
+    cd brain && PYTHONPATH=. ./.venv/bin/python -m evals    # needs ANTHROPIC_API_KEY
+
+It runs each golden case in `brain/evals/cases/*.json` through the agent, applies
+deterministic `must`/`must_not` checks plus an LLM-judge on subjective rubric
+dimensions (grounded / tone / handles_uncertainty / safe), and prints per-case
+PASS/FAIL + a summary. Add new cases by dropping a JSON file in that directory.
