@@ -340,3 +340,33 @@ async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> N
         writer.close()
     finally:
         task.cancel()
+
+
+async def test_server_no_contact_skips_capture(tmp_path: Path) -> None:
+    # WHY: no identity → no per-customer capture (fail-soft); spec-required leg.
+    from glimpse_brain.memory import InMemoryMemory
+
+    cfg = make_config(tmp_path)
+    mem = InMemoryMemory()
+
+    class FinalizeClient:
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            return AgentStep(final_text='["好的"]')
+
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FinalizeClient(), memory=mem)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        # OCR_LINE has NO "contact" field → current_customer is None
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        # nothing was captured under any customer
+        assert await mem.recall("", "包邮", k=5) == []
+        writer.close()
+    finally:
+        task.cancel()

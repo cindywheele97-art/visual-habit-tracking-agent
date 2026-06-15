@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from glimpse_brain.memory import Memory
+from glimpse_brain.redaction import Redactor
 
 
 class RecallCustomerTool:
@@ -18,16 +19,18 @@ class RecallCustomerTool:
         "required": [],
     }
 
-    def __init__(self, memory: Memory, customer: str, k: int) -> None:
+    def __init__(self, memory: Memory, customer: str, k: int, redactor: Redactor) -> None:
         self._memory = memory
         self._customer = customer
         self._k = k
+        self._redactor = redactor
 
     async def run(self, input: dict[str, Any]) -> str:
         hits = await self._memory.recall(self._customer, input.get("query", ""), self._k)
         if not hits:
             return "（暂无该客户的记忆）"
-        return "\n".join(f"- [{h.kind}] {h.text}" for h in hits)
+        raw = "\n".join(f"- [{h.kind}] {h.text}" for h in hits)
+        return self._redactor.redact(raw)
 
 
 class RememberAboutCustomerTool:
@@ -39,12 +42,13 @@ class RememberAboutCustomerTool:
         "required": ["fact"],
     }
 
-    def __init__(self, memory: Memory, customer: str) -> None:
+    def __init__(self, memory: Memory, customer: str, redactor: Redactor) -> None:
         self._memory = memory
         self._customer = customer
+        self._redactor = redactor
 
     async def run(self, input: dict[str, Any]) -> str:
-        fact = input.get("fact", "").strip()
+        fact = self._redactor.redact(input.get("fact", "").strip())
         if not fact:
             return "（未提供要点）"
         await self._memory.write(self._customer, fact, "fact")

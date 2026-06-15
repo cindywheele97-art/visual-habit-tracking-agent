@@ -67,8 +67,8 @@ class Agent:
             raise CostCapExceeded("agent turn rate cap reached")
         tools: list[Tool] = list(self._base_tools)
         if self._memory is not None and customer:
-            tools.append(RecallCustomerTool(self._memory, customer, self._recall_k))
-            tools.append(RememberAboutCustomerTool(self._memory, customer))
+            tools.append(RecallCustomerTool(self._memory, customer, self._recall_k, self._redactor))
+            tools.append(RememberAboutCustomerTool(self._memory, customer, self._redactor))
         registry = {t.name: t for t in tools}
         conversation = self._redactor.redact("\n".join(tail))
         transcript: list[TranscriptEntry] = [
