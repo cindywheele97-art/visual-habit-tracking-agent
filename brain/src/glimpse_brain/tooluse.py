@@ -19,7 +19,16 @@ class ToolCall:
 @dataclass(frozen=True)
 class ToolResult:
     id: str          # matches a ToolCall.id
-    output: str
+    output: str = ""
+    image_b64: str = ""
+    media_type: str = ""
+
+
+@dataclass(frozen=True)
+class ToolImage:
+    """An image a tool returns (the agent sees it as an Anthropic image block)."""
+    image_b64: str
+    media_type: str = "image/jpeg"
 
 
 @dataclass(frozen=True)
@@ -97,12 +106,26 @@ def _to_anthropic_messages(transcript: list[TranscriptEntry]) -> list[dict[str, 
         elif isinstance(entry, ToolResultsMessage):
             messages.append({
                 "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": r.id, "content": r.output}
-                    for r in entry.results
-                ],
+                "content": [_tool_result_block(r) for r in entry.results],
             })
     return messages
+
+
+def _tool_result_block(result: ToolResult) -> dict[str, Any]:
+    if result.image_b64:
+        return {
+            "type": "tool_result",
+            "tool_use_id": result.id,
+            "content": [{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": result.media_type or "image/jpeg",
+                    "data": result.image_b64,
+                },
+            }],
+        }
+    return {"type": "tool_result", "tool_use_id": result.id, "content": result.output}
 
 
 class AnthropicToolUseClient:

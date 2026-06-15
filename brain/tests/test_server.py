@@ -342,6 +342,38 @@ async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> N
         task.cancel()
 
 
+async def test_server_offers_look_tool_when_image_present(tmp_path: Path) -> None:
+    # WHY: an OcrMsg carrying an image makes the look tool available to the agent.
+    cfg = make_config(tmp_path)
+
+    class ToolSnoop:
+        def __init__(self) -> None:
+            self.saw_look = False
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.saw_look = any(t.name == "look_at_conversation" for t in tools)
+            return AgentStep(final_text='["好的"]')
+
+    client = ToolSnoop()
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=client)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        line = ('{"type":"ocr","seq":1,"ts":"t","region_id":"region-1","image":"QUJD",'
+                '"blocks":[{"text":"这个还有吗","x0":0.05,"x1":0.4,"conf":0.95}]}\n')
+        writer.write(line.encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        assert client.saw_look
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_server_no_contact_skips_capture(tmp_path: Path) -> None:
     # WHY: no identity → no per-customer capture (fail-soft); spec-required leg.
     from glimpse_brain.memory import InMemoryMemory

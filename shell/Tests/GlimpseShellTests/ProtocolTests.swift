@@ -132,6 +132,15 @@ func ocrMsgEncodesContact() throws {
 }
 
 @Test
+func ocrMsgEncodesImage() throws {
+    let data = try Wire.encodeLine(
+        OcrMsg(seq: 1, ts: "t", regionId: "r", blocks: [], image: "QUJD")
+    )
+    let line = String(data: data, encoding: .utf8)!
+    #expect(line.contains("\"image\":\"QUJD\""))
+}
+
+@Test
 func cgPointFlipsCocoaYToTopLeftOrigin() {
     // Primary screen height H: a Cocoa point (x, y) maps to CG (x, H - y).
     let h = NSScreen.screens.first?.frame.height ?? 0

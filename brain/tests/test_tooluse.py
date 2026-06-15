@@ -50,3 +50,31 @@ def test_to_anthropic_messages_roundtrips_transcript() -> None:
     assert msgs[2]["content"][0] == {
         "type": "tool_result", "tool_use_id": "t1", "content": "政策内容"
     }
+
+
+def test_image_tool_result_emits_anthropic_image_block() -> None:
+    # WHY: a look-at-image tool returns an image; the seam must render it as a
+    # valid Anthropic image block in the tool_result content.
+    from glimpse_brain.tooluse import (
+        AgentStep, ToolCall, ToolResult, ToolResultsMessage, UserMessage,
+        _to_anthropic_messages,
+    )
+    transcript = [
+        UserMessage(text="客户: 这个怎么样"),
+        AgentStep(tool_calls=(ToolCall(id="t1", name="look_at_conversation", input={}),)),
+        ToolResultsMessage(results=(
+            ToolResult(id="t1", image_b64="QUJD", media_type="image/jpeg"),
+        )),
+    ]
+    msgs = _to_anthropic_messages(transcript)
+    block = msgs[2]["content"][0]
+    assert block["type"] == "tool_result" and block["tool_use_id"] == "t1"
+    img = block["content"][0]
+    assert img["type"] == "image"
+    assert img["source"] == {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"}
+
+
+def test_text_tool_result_unchanged() -> None:
+    from glimpse_brain.tooluse import ToolResult, ToolResultsMessage, _to_anthropic_messages
+    msgs = _to_anthropic_messages([ToolResultsMessage(results=(ToolResult(id="t1", output="政策"),))])
+    assert msgs[0]["content"][0] == {"type": "tool_result", "tool_use_id": "t1", "content": "政策"}

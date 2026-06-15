@@ -165,3 +165,20 @@ draw a box over WeChat's contact-name header); the detected name shows as
 3. Tell the agent something memorable about a customer, then return to that chat
    later → confirm it recalls the fact (check `recall_customer` in `events.jsonl`
    `agent_turn` tools_used).
+
+## Phase 6 — the agent can see
+
+When a customer sends a photo, the brain now sends a downscaled screenshot of the
+conversation region (`OcrMsg.image`); the agent can call `look_at_conversation` to
+see it (Claude vision — no extra model) and reason with the playbook + memory.
+
+- The agent decides when to look, so vision tokens are spent only when a photo
+  matters; everything is fail-soft to text-only.
+- v1 sees the inline chat thumbnail (enough for an obvious product/damage). Precise
+  SKU matching (a CLIP image index) and opening full-resolution images are later
+  increments.
+
+### Manual E2E
+1. Send a product photo in WeChat's watched chat.
+2. Confirm the agent calls `look_at_conversation` (in `events.jsonl` `agent_turn`
+   tools_used) and drafts a reply that references what's in the photo.

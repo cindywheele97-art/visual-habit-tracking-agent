@@ -14,12 +14,14 @@ from glimpse_brain.memory_tools import RecallCustomerTool, RememberAboutCustomer
 from glimpse_brain.tools import KnowledgeBaseTool, Tool
 from glimpse_brain.tooluse import (
     AgentStep,
+    ToolImage,
     ToolResult,
     ToolResultsMessage,
     ToolUseClient,
     TranscriptEntry,
     UserMessage,
 )
+from glimpse_brain.vision_tool import LookTool
 from glimpse_brain.redaction import Redactor
 
 USER_TEMPLATE = """\
@@ -62,13 +64,19 @@ class Agent:
         self._recall_k = recall_k
         self._base_tools: list[Tool] = [KnowledgeBaseTool(knowledge)]
 
-    async def suggest(self, tail: list[str], customer: str | None = None) -> AgentResult:
+    async def suggest(
+        self, tail: list[str], customer: str | None = None, image: str | None = None
+    ) -> AgentResult:
         if not self._limiter.allow():
             raise CostCapExceeded("agent turn rate cap reached")
         tools: list[Tool] = list(self._base_tools)
         if self._memory is not None and customer:
             tools.append(RecallCustomerTool(self._memory, customer, self._recall_k, self._redactor))
             tools.append(RememberAboutCustomerTool(self._memory, customer, self._redactor))
+        # Unlike memory (optional infrastructure → `self._memory is not None`),
+        # vision needs no subsystem: the image is passed straight into LookTool.
+        if image:
+            tools.append(LookTool(image))
         registry = {t.name: t for t in tools}
         conversation = self._redactor.redact("\n".join(tail))
         transcript: list[TranscriptEntry] = [
@@ -96,6 +104,11 @@ class Agent:
                         output = await tool.run(call.input)
                     except Exception as exc:  # a tool failure must not kill the pass
                         output = f"tool error: {exc}"
-                results.append(ToolResult(id=call.id, output=output))
+                if isinstance(output, ToolImage):
+                    results.append(ToolResult(
+                        id=call.id, image_b64=output.image_b64, media_type=output.media_type
+                    ))
+                else:
+                    results.append(ToolResult(id=call.id, output=output))
             transcript.append(ToolResultsMessage(results=tuple(results)))
         raise SuggestionParseError("agent did not finalize within max_iterations")
