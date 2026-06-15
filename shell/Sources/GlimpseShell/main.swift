@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let flags = WatchFlags()
     private var sender: Sender!
     private var calibrator: InputBoxCalibrator?
+    private var contactSelector: RegionSelector?
     private var countdownTimer: Timer?
     private var escMonitors: [Any] = []
     private var autoSendEnabled: Bool {
@@ -50,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menu.addItem(
             NSMenuItem(title: "设置输入框位置", action: #selector(calibrateInputBox), keyEquivalent: "i")
+        )
+        menu.addItem(
+            NSMenuItem(title: "设置联系人区域", action: #selector(calibrateContactRegion), keyEquivalent: "")
         )
         let autoSendItem = NSMenuItem(
             title: "自动发送", action: #selector(toggleAutoSend(_:)), keyEquivalent: ""
@@ -149,6 +153,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.selector = nil
         }
         selector?.begin()
+    }
+
+    @objc private func calibrateContactRegion() {
+        contactSelector = RegionSelector { [weak self] rect in
+            ContactRegionStore.save(rect)
+            self?.contactSelector = nil
+            self?.overlay.setStatus("watching", detail: "联系人区域已设置")
+        }
+        contactSelector?.begin()
     }
 
     @objc private func calibrateInputBox() {
