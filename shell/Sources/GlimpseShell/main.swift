@@ -273,9 +273,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { flags.lastEmptyOcr = nil }
         seq += 1
         let contact = contactReader.current
+        let imageB64 = ImageUtil.downscaledJPEGBase64(image) ?? ""
         let message = OcrMsg(
             seq: seq, ts: isoFormatter.string(from: Date()),
-            regionId: regionId, blocks: blocks, contact: contact
+            regionId: regionId, blocks: blocks, contact: contact,
+            image: imageB64
         )
         overlay.showContact(contact)
         ipc.send(message, ackSeq: message.seq)
