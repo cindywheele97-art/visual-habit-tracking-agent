@@ -131,6 +131,14 @@ def test_replied_rejects_unknown_mode() -> None:
         )
 
 
+def test_ocr_image_defaults_empty_and_roundtrips() -> None:
+    line = '{"type":"ocr","seq":1,"ts":"t","region_id":"r","blocks":[]}'
+    parsed = parse_inbound(line)
+    assert isinstance(parsed, OcrMsg) and parsed.image == ""
+    msg = OcrMsg(seq=2, ts="t", region_id="r", blocks=[], image="QUJD")
+    assert parse_inbound(to_line(msg)).image == "QUJD"
+
+
 def test_ocr_contact_defaults_empty_and_roundtrips() -> None:
     # WHY: contact is the memory key; it must be optional (old shells omit it)
     # and survive the wire.
