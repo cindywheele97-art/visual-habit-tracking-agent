@@ -28,6 +28,7 @@ class OcrMsg(BaseModel):
     ts: str
     region_id: str
     blocks: list[Block]
+    contact: str = ""  # OCR'd customer name from the contact-name region; "" = unknown
 
 
 class HelloMsg(BaseModel):
