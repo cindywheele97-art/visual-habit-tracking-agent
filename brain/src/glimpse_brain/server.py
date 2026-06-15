@@ -77,6 +77,7 @@ class GlimpseServer:
             self._build_memory(cfg) if isinstance(memory, _Unset) else memory
         )
         self._current_customer: str | None = None
+        self._last_image: str = ""
         self._agent = Agent(
             client=tool_client if tool_client is not None
             else AnthropicToolUseClient(cfg.llm.model),
@@ -195,6 +196,8 @@ class GlimpseServer:
         await self._send(AckMsg(seq=msg.seq))
         self._region_id = msg.region_id
         self._current_customer = (msg.contact or "").strip() or None
+        if msg.image:
+            self._last_image = msg.image
         result = self._tracker.ingest(msg.blocks)
         if not result.accepted or not (result.new_inbound or result.new_outbound):
             return
@@ -242,7 +245,9 @@ class GlimpseServer:
     async def _fire(self) -> None:
         try:
             result = await self._agent.suggest(
-                self._tracker.tail(), customer=self._current_customer
+                self._tracker.tail(),
+                customer=self._current_customer,
+                image=self._last_image or None,
             )
         except CostCapExceeded:
             await self._send(StatusMsg(state="degraded", detail="cost cap reached"))
