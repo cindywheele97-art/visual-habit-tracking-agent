@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sender: Sender!
     private var calibrator: InputBoxCalibrator?
     private var contactSelector: RegionSelector?
+    private let contactReader = ContactReader()
     private var countdownTimer: Timer?
     private var escMonitors: [Any] = []
     private var autoSendEnabled: Bool {
@@ -124,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         overlay.setAutoSend(autoSendEnabled)
 
+        contactReader.start()
         overlay.show()
 
         // Region-dead watchdog (spec §5): frames keep changing but OCR finds no
@@ -270,10 +272,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.async { flags.lastEmptyOcr = nil }
         seq += 1
+        let contact = contactReader.current
         let message = OcrMsg(
             seq: seq, ts: isoFormatter.string(from: Date()),
-            regionId: regionId, blocks: blocks
+            regionId: regionId, blocks: blocks, contact: contact
         )
+        overlay.showContact(contact)
         ipc.send(message, ackSeq: message.seq)
     }
 

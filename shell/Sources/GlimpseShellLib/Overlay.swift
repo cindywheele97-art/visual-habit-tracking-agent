@@ -10,6 +10,7 @@ public final class OverlayModel: ObservableObject {
     public var onCopy: ((String) -> Void)?
     @Published public var autoSendOn = false
     @Published public var countdownRemaining: Int?
+    @Published public var contact: String = ""
     public var onAct: ((_ suggestionId: String, _ text: String) -> Void)?
 
     public init() {}
@@ -77,6 +78,11 @@ public final class OverlayController {
     public func setAutoSend(_ on: Bool) {
         DispatchQueue.main.async { self.model.autoSendOn = on }
     }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func showContact(_ name: String) {
+        DispatchQueue.main.async { self.model.contact = name }
+    }
 }
 
 struct OverlayView: View {
@@ -102,6 +108,9 @@ struct OverlayView: View {
                 if model.stale {
                     Text("stale").font(.caption2).padding(2)
                         .background(Color.orange.opacity(0.3)).cornerRadius(3)
+                }
+                if !model.contact.isEmpty {
+                    Text("👤 \(model.contact)").font(.caption).foregroundColor(.secondary)
                 }
                 Spacer()
             }

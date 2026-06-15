@@ -29,6 +29,33 @@ public enum ClickSnapshot {
 
         let bounds = CGDisplayBounds(scDisplay.displayID)
         let globalRect = rect(around: point, in: bounds, size: size)
+        return try await captureGlobalRect(globalRect, on: scDisplay, displayBounds: bounds)
+    }
+
+    /// One-shot screenshot of an arbitrary global-coordinate rect.
+    /// Returns nil if no display contains the rect's origin.
+    public static func captureRect(_ globalRect: CGRect) async throws -> CGImage? {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true
+        )
+        guard
+            let scDisplay = content.displays.first(where: {
+                CGDisplayBounds($0.displayID).contains(globalRect.origin)
+            })
+        else { return nil }
+
+        let bounds = CGDisplayBounds(scDisplay.displayID)
+        return try await captureGlobalRect(globalRect, on: scDisplay, displayBounds: bounds)
+    }
+
+    // MARK: - Private
+
+    /// Shared screenshot core: converts a global rect to display-local coords and
+    /// captures it via SCScreenshotManager. `scDisplay` must be the display that
+    /// owns the rect.
+    private static func captureGlobalRect(
+        _ globalRect: CGRect, on scDisplay: SCDisplay, displayBounds bounds: CGRect
+    ) async throws -> CGImage? {
         let local = CGRect(
             x: globalRect.minX - bounds.minX, y: globalRect.minY - bounds.minY,
             width: globalRect.width, height: globalRect.height
