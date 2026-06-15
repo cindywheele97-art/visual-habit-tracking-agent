@@ -141,3 +141,27 @@ It runs each golden case in `brain/evals/cases/*.json` through the agent, applie
 deterministic `must`/`must_not` checks plus an LLM-judge on subjective rubric
 dimensions (grounded / tone / handles_uncertainty / safe), and prints per-case
 PASS/FAIL + a summary. Add new cases by dropping a JSON file in that directory.
+
+## Phase 5 — per-customer memory
+
+The agent now remembers customers. Calibrate once (menu 👁 → **设置联系人区域**,
+draw a box over WeChat's contact-name header); the detected name shows as
+**👤 <name>** in the overlay and scopes memory to that customer.
+
+- Interactions are auto-captured per customer; the agent can `recall_customer` and
+  `remember_about_customer` while drafting.
+- Memory is local-first (`~/.glimpse/palace`, MemPalace) and fail-soft — if it's
+  unavailable, drafting falls back to knowledge-base-only.
+- Config (`memory` table in `~/.glimpse/glimpse.toml`): `enabled`, `palace_path`,
+  `embedding_model` (default `embeddinggemma`), `recall_k`.
+
+### Memory integration test (opt-in, local, slow — downloads the embedding model)
+
+    cd brain && ./.venv/bin/python -m pytest tests/test_mempalace_memory.py -m integration -v
+
+### Manual E2E
+1. 设置联系人区域 over the contact header → name appears as 👤 in the overlay.
+2. Switch chats → the 👤 name changes.
+3. Tell the agent something memorable about a customer, then return to that chat
+   later → confirm it recalls the fact (check `recall_customer` in `events.jsonl`
+   `agent_turn` tools_used).

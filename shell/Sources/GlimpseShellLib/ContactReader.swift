@@ -7,10 +7,13 @@ public final class ContactReader {
     private let region: () -> CGRect?
     private var timer: Timer?
     // Written on main (the timer/MainActor hop), read from the capture queue in
-    // processFrame. A deliberate, benign display-only race on a value-type String
-    // (a name shown for the operator's awareness, never a correctness input) —
-    // not worth actor isolation under the package's main-confined-by-convention
-    // model. See WatchFlags for the same confinement-by-comment pattern.
+    // processFrame (it becomes OcrMsg.contact, the memory key). A deliberate,
+    // bounded-staleness race on a value-type String: after a chat switch the
+    // name may lag by up to one timer interval (~3s), so at most a handful of
+    // interaction lines get attributed to the previous customer before it
+    // corrects — a low-frequency, low-consequence error not worth actor
+    // isolation under the package's main-confined-by-convention model.
+    // See WatchFlags for the same confinement-by-comment pattern.
     public private(set) var current: String = ""
 
     public init(region: @escaping () -> CGRect? = { ContactRegionStore.load() }) {
