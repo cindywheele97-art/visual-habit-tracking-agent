@@ -64,3 +64,12 @@ def test_llm_cfg_max_iterations_overridable() -> None:
 
     cfg = Config.model_validate({"llm": {"max_iterations": 6}})
     assert cfg.llm.max_iterations == 6
+
+
+def test_memory_cfg_defaults() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.memory.recall_k == 5
+    assert cfg.memory.embedding_model == "embeddinggemma"
+    assert cfg.memory.enabled is True

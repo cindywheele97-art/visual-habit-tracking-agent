@@ -40,6 +40,7 @@ def make_config(tmp_path: Path) -> Config:
                 "playbook": str(playbook),
             },
             "tracker": {"settle_ms": 30},
+            "memory": {"enabled": False},
         }
     )
 
@@ -254,6 +255,44 @@ async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
             for line in Path(cfg.brain.event_log).read_text(encoding="utf-8").splitlines()
         ]
         assert "click" in kinds and "observation" in kinds
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_server_captures_interactions_and_passes_customer(tmp_path: Path) -> None:
+    # WHY: with a known contact, the brain auto-captures the interaction to that
+    # customer's memory and scopes the agent to them.
+    from glimpse_brain.memory import InMemoryMemory
+
+    cfg = make_config(tmp_path)
+    mem = InMemoryMemory()
+
+    class CustomerCapturingClient:
+        def __init__(self) -> None:
+            self.seen_customer_had_memory = False
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.seen_customer_had_memory = any(t.name == "recall_customer" for t in tools)
+            return AgentStep(final_text='["好的"]')
+
+    client = CustomerCapturingClient()
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=client, memory=mem)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        line = ('{"type":"ocr","seq":1,"ts":"t","region_id":"region-1","contact":"小明",'
+                '"blocks":[{"text":"在吗，包邮吗？","x0":0.05,"x1":0.4,"conf":0.95}]}\n')
+        writer.write(line.encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        assert client.seen_customer_had_memory  # agent got memory tools for 小明
+        recalled = await mem.recall("小明", "包邮", k=5)
+        assert any(h.kind == "interaction" for h in recalled)  # captured
         writer.close()
     finally:
         task.cancel()
