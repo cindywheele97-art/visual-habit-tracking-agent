@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let flags = WatchFlags()
     private var sender: Sender!
     private var calibrator: InputBoxCalibrator?
+    private var contactSelector: RegionSelector?
+    private let contactReader = ContactReader()
     private var countdownTimer: Timer?
     private var escMonitors: [Any] = []
     private var autoSendEnabled: Bool {
@@ -50,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menu.addItem(
             NSMenuItem(title: "设置输入框位置", action: #selector(calibrateInputBox), keyEquivalent: "i")
+        )
+        menu.addItem(
+            NSMenuItem(title: "设置联系人区域", action: #selector(calibrateContactRegion), keyEquivalent: "")
         )
         let autoSendItem = NSMenuItem(
             title: "自动发送", action: #selector(toggleAutoSend(_:)), keyEquivalent: ""
@@ -120,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         overlay.setAutoSend(autoSendEnabled)
 
+        contactReader.start()
         overlay.show()
 
         // Region-dead watchdog (spec §5): frames keep changing but OCR finds no
@@ -149,6 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.selector = nil
         }
         selector?.begin()
+    }
+
+    @objc private func calibrateContactRegion() {
+        contactSelector = RegionSelector { [weak self] rect in
+            ContactRegionStore.save(rect)
+            self?.contactSelector = nil
+            self?.overlay.setStatus("watching", detail: "联系人区域已设置")
+        }
+        contactSelector?.begin()
     }
 
     @objc private func calibrateInputBox() {
@@ -257,10 +272,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         DispatchQueue.main.async { flags.lastEmptyOcr = nil }
         seq += 1
+        let contact = contactReader.current
         let message = OcrMsg(
             seq: seq, ts: isoFormatter.string(from: Date()),
-            regionId: regionId, blocks: blocks
+            regionId: regionId, blocks: blocks, contact: contact
         )
+        overlay.showContact(contact)
         ipc.send(message, ackSeq: message.seq)
     }
 

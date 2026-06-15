@@ -129,3 +129,15 @@ def test_replied_rejects_unknown_mode() -> None:
         parse_inbound(
             '{"type":"replied","suggestion_id":"s1","region_id":"r","mode":"bogus"}'
         )
+
+
+def test_ocr_contact_defaults_empty_and_roundtrips() -> None:
+    # WHY: contact is the memory key; it must be optional (old shells omit it)
+    # and survive the wire.
+    line = '{"type":"ocr","seq":1,"ts":"t","region_id":"r","blocks":[]}'
+    parsed = parse_inbound(line)
+    assert isinstance(parsed, OcrMsg)
+    assert parsed.contact == ""  # back-compatible default
+
+    msg = OcrMsg(seq=2, ts="t", region_id="r", blocks=[], contact="小明")
+    assert parse_inbound(to_line(msg)).contact == "小明"

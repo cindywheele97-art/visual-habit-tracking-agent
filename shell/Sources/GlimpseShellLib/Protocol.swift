@@ -22,20 +22,20 @@ public struct OcrMsg: Codable {
     public var ts: String
     public var regionId: String
     public var blocks: [Block]
+    public var contact: String
 
-    public init(seq: Int, ts: String, regionId: String, blocks: [Block]) {
+    public init(seq: Int, ts: String, regionId: String, blocks: [Block], contact: String = "") {
         self.seq = seq
         self.ts = ts
         self.regionId = regionId
         self.blocks = blocks
+        self.contact = contact
     }
 
     enum CodingKeys: String, CodingKey {
-        case type
-        case seq
-        case ts
+        case type, seq, ts
         case regionId = "region_id"
-        case blocks
+        case blocks, contact
     }
 }
 

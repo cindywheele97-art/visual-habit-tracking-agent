@@ -122,3 +122,68 @@ async def test_agent_respects_rate_cap() -> None:
     await agent.suggest(["客户: 在吗"])
     with pytest.raises(CostCapExceeded):
         await agent.suggest(["客户: 在吗？"])
+
+
+async def test_agent_uses_memory_tools_when_customer_present() -> None:
+    # WHY: with a known customer, the agent can recall that customer's memory and
+    # ground the draft in it — the core of per-customer memory.
+    from glimpse_brain.memory import InMemoryMemory
+    from glimpse_brain.tooluse import AgentStep, ToolCall
+
+    mem = InMemoryMemory()
+    await mem.write("小明", "偏好顺丰快递", "fact")
+
+    client = ScriptedClient([
+        AgentStep(tool_calls=(ToolCall(id="r1", name="recall_customer", input={"query": "快递"}),)),
+        AgentStep(final_text='["好的小明，依旧给您发顺丰"]'),
+    ])
+    agent = Agent(
+        client=client, system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4, memory=mem, recall_k=5,
+    )
+    result = await agent.suggest(["客户: 还是老地址发货吧"], customer="小明")
+    assert result.drafts == ["好的小明，依旧给您发顺丰"]
+    assert "recall_customer" in result.tools_used
+
+
+async def test_agent_omits_memory_tools_without_customer() -> None:
+    # WHY: no identity → fail-soft to KB-only (pure P4); memory tools not offered.
+    from glimpse_brain.memory import InMemoryMemory
+    from glimpse_brain.tooluse import AgentStep
+
+    captured = {}
+
+    class CaptureToolsClient:
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            captured["tool_names"] = [t.name for t in tools]
+            return AgentStep(final_text='["在的"]')
+
+    agent = Agent(
+        client=CaptureToolsClient(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4, memory=InMemoryMemory(), recall_k=5,
+    )
+    await agent.suggest(["客户: 在吗"], customer=None)
+    assert captured["tool_names"] == ["knowledge_base"]  # no memory tools
+
+
+async def test_agent_omits_memory_tools_when_memory_disabled() -> None:
+    # WHY: the other fail-soft leg — a known customer but no memory backend
+    # (memory=None) must also degrade to KB-only, never error.
+    from glimpse_brain.tooluse import AgentStep
+
+    captured = {}
+
+    class CaptureToolsClient:
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            captured["tool_names"] = [t.name for t in tools]
+            return AgentStep(final_text='["在的"]')
+
+    agent = Agent(
+        client=CaptureToolsClient(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4, memory=None, recall_k=5,
+    )
+    await agent.suggest(["客户: 在吗"], customer="小明")
+    assert captured["tool_names"] == ["knowledge_base"]

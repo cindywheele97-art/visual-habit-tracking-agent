@@ -46,12 +46,26 @@ class RedactionCfg(BaseModel):
     )
 
 
+class MemoryCfg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    palace_path: str = Field(default_factory=lambda: str(Path("~/.glimpse/palace").expanduser()))
+    embedding_model: str = "embeddinggemma"
+    recall_k: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("palace_path", mode="before")
+    @classmethod
+    def _expand(cls, v: str) -> str:
+        return str(Path(v).expanduser())
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     brain: BrainCfg = Field(default_factory=BrainCfg)
     llm: LlmCfg = Field(default_factory=LlmCfg)
     tracker: TrackerCfg = Field(default_factory=TrackerCfg)
     redaction: RedactionCfg = Field(default_factory=RedactionCfg)
+    memory: MemoryCfg = Field(default_factory=MemoryCfg)
 
 
 def load_config(path: Path | None) -> Config:

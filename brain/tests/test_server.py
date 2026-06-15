@@ -40,6 +40,7 @@ def make_config(tmp_path: Path) -> Config:
                 "playbook": str(playbook),
             },
             "tracker": {"settle_ms": 30},
+            "memory": {"enabled": False},
         }
     )
 
@@ -259,6 +260,44 @@ async def test_ocr_click_and_summarize_interleave(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_server_captures_interactions_and_passes_customer(tmp_path: Path) -> None:
+    # WHY: with a known contact, the brain auto-captures the interaction to that
+    # customer's memory and scopes the agent to them.
+    from glimpse_brain.memory import InMemoryMemory
+
+    cfg = make_config(tmp_path)
+    mem = InMemoryMemory()
+
+    class CustomerCapturingClient:
+        def __init__(self) -> None:
+            self.seen_customer_had_memory = False
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.seen_customer_had_memory = any(t.name == "recall_customer" for t in tools)
+            return AgentStep(final_text='["好的"]')
+
+    client = CustomerCapturingClient()
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=client, memory=mem)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        line = ('{"type":"ocr","seq":1,"ts":"t","region_id":"region-1","contact":"小明",'
+                '"blocks":[{"text":"在吗，包邮吗？","x0":0.05,"x1":0.4,"conf":0.95}]}\n')
+        writer.write(line.encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        assert client.seen_customer_had_memory  # agent got memory tools for 小明
+        recalled = await mem.recall("小明", "包邮", k=5)
+        assert any(h.kind == "interaction" for h in recalled)  # captured
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> None:
     # WHY: the agent replaces the suggester on the suggestion path; its turn is
     # auditable (tools used + draft count, logged before the user sees drafts)
@@ -298,6 +337,36 @@ async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> N
         agent_turn = next(r for r in records if r["kind"] == "agent_turn")
         assert agent_turn["payload"]["tools_used"] == ["knowledge_base"]
         assert agent_turn["payload"]["draft_count"] == 2
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_server_no_contact_skips_capture(tmp_path: Path) -> None:
+    # WHY: no identity → no per-customer capture (fail-soft); spec-required leg.
+    from glimpse_brain.memory import InMemoryMemory
+
+    cfg = make_config(tmp_path)
+    mem = InMemoryMemory()
+
+    class FinalizeClient:
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            return AgentStep(final_text='["好的"]')
+
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FinalizeClient(), memory=mem)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        # OCR_LINE has NO "contact" field → current_customer is None
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        # nothing was captured under any customer
+        assert await mem.recall("", "包邮", k=5) == []
         writer.close()
     finally:
         task.cancel()

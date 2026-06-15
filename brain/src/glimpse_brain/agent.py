@@ -9,6 +9,8 @@ from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.knowledge import KnowledgeBase
 from glimpse_brain.parsing import parse_suggestions
 from glimpse_brain.llm import RateLimiter
+from glimpse_brain.memory import Memory
+from glimpse_brain.memory_tools import RecallCustomerTool, RememberAboutCustomerTool
 from glimpse_brain.tools import KnowledgeBaseTool, Tool
 from glimpse_brain.tooluse import (
     AgentStep,
@@ -47,6 +49,8 @@ class Agent:
         limiter: RateLimiter,
         max_suggestions: int,
         max_iterations: int,
+        memory: Memory | None = None,
+        recall_k: int = 5,
     ) -> None:
         self._client = client
         self._system = system
@@ -54,12 +58,18 @@ class Agent:
         self._limiter = limiter
         self._max = max_suggestions
         self._max_iterations = max_iterations
-        self._tools: list[Tool] = [KnowledgeBaseTool(knowledge)]
-        self._registry = {t.name: t for t in self._tools}
+        self._memory = memory
+        self._recall_k = recall_k
+        self._base_tools: list[Tool] = [KnowledgeBaseTool(knowledge)]
 
-    async def suggest(self, tail: list[str]) -> AgentResult:
+    async def suggest(self, tail: list[str], customer: str | None = None) -> AgentResult:
         if not self._limiter.allow():
             raise CostCapExceeded("agent turn rate cap reached")
+        tools: list[Tool] = list(self._base_tools)
+        if self._memory is not None and customer:
+            tools.append(RecallCustomerTool(self._memory, customer, self._recall_k, self._redactor))
+            tools.append(RememberAboutCustomerTool(self._memory, customer, self._redactor))
+        registry = {t.name: t for t in tools}
         conversation = self._redactor.redact("\n".join(tail))
         transcript: list[TranscriptEntry] = [
             UserMessage(text=USER_TEMPLATE.format(conversation=conversation, n=self._max))
@@ -67,7 +77,7 @@ class Agent:
         tools_used: list[str] = []
         for _ in range(self._max_iterations):
             step: AgentStep = await self._client.run_turn(
-                system=self._system, transcript=transcript, tools=self._tools
+                system=self._system, transcript=transcript, tools=tools
             )
             if step.final_text is not None:
                 return AgentResult(
@@ -78,7 +88,7 @@ class Agent:
             results = []
             for call in step.tool_calls:
                 tools_used.append(call.name)
-                tool = self._registry.get(call.name)
+                tool = registry.get(call.name)
                 if tool is None:
                     output = f"unknown tool: {call.name}"
                 else:
