@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from glimpse_brain.knowledge import KnowledgeBase
+from glimpse_brain.tooluse import ToolImage
 
 
 class Tool(Protocol):
@@ -13,7 +14,7 @@ class Tool(Protocol):
     description: str
     input_schema: dict[str, Any]
 
-    async def run(self, input: dict[str, Any]) -> str: ...
+    async def run(self, input: dict[str, Any]) -> "str | ToolImage": ...
 
 
 class KnowledgeBaseTool:

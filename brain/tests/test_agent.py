@@ -187,3 +187,52 @@ async def test_agent_omits_memory_tools_when_memory_disabled() -> None:
     )
     await agent.suggest(["客户: 在吗"], customer="小明")
     assert captured["tool_names"] == ["knowledge_base"]
+
+
+async def test_agent_looks_at_image_when_available() -> None:
+    # WHY: with an image available, the agent can call look_at_conversation, see
+    # it (image tool-result fed back), and finalize a grounded reply.
+    from glimpse_brain.tooluse import AgentStep, ToolCall
+
+    fed_back: dict = {}
+
+    class LookThenFinalize:
+        def __init__(self) -> None:
+            self.turns = 0
+
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            self.turns += 1
+            if self.turns == 1:
+                return AgentStep(tool_calls=(ToolCall(id="l1", name="look_at_conversation", input={}),))
+            fed_back["last"] = transcript[-1]  # the ToolResultsMessage we built
+            return AgentStep(final_text='["看到了，这款是经典款黑色"]')
+
+    agent = Agent(
+        client=LookThenFinalize(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4,
+    )
+    result = await agent.suggest(["客户: 这个还有货吗"], image="QUJD")
+    assert result.drafts == ["看到了，这款是经典款黑色"]
+    assert "look_at_conversation" in result.tools_used
+    img_result = fed_back["last"].results[0]
+    assert img_result.image_b64 == "QUJD"
+
+
+async def test_agent_omits_look_tool_without_image() -> None:
+    from glimpse_brain.tooluse import AgentStep
+
+    captured = {}
+
+    class CaptureTools:
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            captured["names"] = [t.name for t in tools]
+            return AgentStep(final_text='["在的"]')
+
+    agent = Agent(
+        client=CaptureTools(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4,
+    )
+    await agent.suggest(["客户: 在吗"], image=None)
+    assert "look_at_conversation" not in captured["names"]
