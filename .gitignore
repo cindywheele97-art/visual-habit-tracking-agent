@@ -10,3 +10,5 @@ __pycache__/
 data/
 # Personal launchers (may reference local key paths) — keep out of the repo.
 scripts/*.local.sh
+# Machine-generated eval candidates (promote into cases/ to gate on them)
+brain/evals/cases/candidates/
