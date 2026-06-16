@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -63,6 +63,15 @@ class RepliedMsg(BaseModel):
     mode: Literal["fill", "sent", "cancelled"]
 
 
+class FeedbackMsg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["feedback"] = "feedback"
+    suggestion_id: str
+    region_id: str
+    verdict: Literal["up", "down"]
+    note: str = ""  # free-text correction; meaningful with "down"
+
+
 class SummarizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["summarize"] = "summarize"
@@ -101,8 +110,14 @@ class SummaryMsg(BaseModel):
     text: str
 
 
-InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest | RepliedMsg
-OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg | SummaryMsg
+class AdvisoryMsg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["advisory"] = "advisory"
+    text: str
+
+
+InboundMsg = Union[OcrMsg, HelloMsg, CopiedMsg, ClickMsg, SummarizeRequest, RepliedMsg, FeedbackMsg]
+OutboundMsg = Union[AckMsg, SuggestionsMsg, StatusMsg, SummaryMsg, AdvisoryMsg]
 
 _INBOUND: TypeAdapter[InboundMsg] = TypeAdapter(
     Annotated[InboundMsg, Field(discriminator="type")]
