@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,8 +13,10 @@ from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
 from glimpse_brain.events import EventLog
 from glimpse_brain.protocol import (
     AckMsg,
+    AdvisoryMsg,
     ClickMsg,
     CopiedMsg,
+    FeedbackMsg,
     HelloMsg,
     OcrMsg,
     OutboundMsg,
@@ -27,7 +30,9 @@ from glimpse_brain.protocol import (
     parse_inbound,
     to_line,
 )
+from glimpse_brain.feedback import FeedbackLog, FeedbackRecord
 from glimpse_brain.memory import Memory
+from glimpse_brain.satisfaction import SatisfactionTracker
 from glimpse_brain.redaction import Redactor
 from glimpse_brain.settle import SettleGate
 from glimpse_brain.agent import Agent
@@ -79,6 +84,17 @@ class GlimpseServer:
         )
         self._current_customer: str | None = None
         self._last_image: str = ""
+        self._feedback_log = FeedbackLog(
+            Path(cfg.brain.feedback_log), self._redactor
+        )
+        self._satisfaction = SatisfactionTracker(
+            window=cfg.feedback.satisfaction_window,
+            threshold=cfg.feedback.advisory_threshold,
+            min_ratings=cfg.feedback.advisory_min_ratings,
+        )
+        # region_id -> {"tail": [...], "items": {suggestion_id: text}} captured at
+        # suggestion time, so feedback resolves the exact draft + conversation.
+        self._last_suggestions: dict[str, dict] = {}
         self._agent = Agent(
             client=tool_client if tool_client is not None
             else AnthropicToolUseClient(cfg.llm.model),
@@ -103,6 +119,7 @@ class GlimpseServer:
         self._send_lock = asyncio.Lock()
         self._region_id = ""
         self._summarizing = False
+        self._seed_satisfaction()
 
     @staticmethod
     def _build_memory(cfg: Config) -> Memory | None:
@@ -188,6 +205,8 @@ class GlimpseServer:
                     "texts": [b.text for b in msg.blocks],
                 },
             )
+        elif isinstance(msg, FeedbackMsg):
+            await self._on_feedback(msg)
         elif isinstance(msg, SummarizeRequest):
             await self._on_summarize()
         elif isinstance(msg, OcrMsg):
@@ -244,9 +263,10 @@ class GlimpseServer:
             self._summarizing = False
 
     async def _fire(self) -> None:
+        tail = self._tracker.tail()
         try:
             result = await self._agent.suggest(
-                self._tracker.tail(),
+                tail,
                 customer=self._current_customer,
                 image=self._last_image or None,
             )
@@ -270,9 +290,74 @@ class GlimpseServer:
             SuggestionItem(id=f"s{i}", text=text)
             for i, text in enumerate(result.drafts, 1)
         ]
+        self._last_suggestions[self._region_id] = {
+            "tail": tail,
+            "items": {it.id: it.text for it in items},
+        }
         self._events.append("suggestion_shown", self._region_id, {"items": result.drafts})
         await self._send(SuggestionsMsg(region_id=self._region_id, items=items))
         await self._send(StatusMsg(state="watching"))
+
+    async def _on_feedback(self, msg: FeedbackMsg) -> None:
+        # Audit event (note redacted by redact_payload, like every event).
+        self._events.append(
+            "feedback",
+            msg.region_id,
+            {"suggestion_id": msg.suggestion_id, "verdict": msg.verdict, "note": msg.note},
+        )
+        snapshot = self._last_suggestions.get(msg.region_id, {})
+        conversation = list(snapshot.get("tail", []))
+        draft = snapshot.get("items", {}).get(msg.suggestion_id, "")
+        self._feedback_log.append(
+            FeedbackRecord(
+                ts=datetime.now(UTC).isoformat(),
+                suggestion_id=msg.suggestion_id,
+                region_id=msg.region_id,
+                verdict=msg.verdict,
+                note=msg.note,
+                conversation=conversation,
+                draft=draft,
+                customer=self._current_customer or "",
+            )
+        )
+        # A correction with a known customer becomes recallable memory.
+        if (
+            msg.verdict == "down"
+            and msg.note
+            and self._memory is not None
+            and self._current_customer
+        ):
+            try:
+                await self._memory.write(
+                    self._current_customer,
+                    self._redactor.redact(f"（人工修正）{msg.note}"),
+                    "correction",
+                )
+            except Exception:  # memory failure must not break feedback
+                log.exception("feedback memory write failed")
+        if self._satisfaction.record(msg.verdict):
+            await self._send(AdvisoryMsg(text="满意率已达标，可考虑开启自动发送"))
+
+    def _seed_satisfaction(self) -> None:
+        path = Path(self._cfg.brain.event_log)
+        if not path.exists():
+            return
+        verdicts: list[str] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("kind") == "feedback":
+                    verdict = rec.get("payload", {}).get("verdict")
+                    if verdict in ("up", "down"):
+                        verdicts.append(verdict)
+        except OSError:
+            return
+        self._satisfaction.seed(verdicts)
 
     async def _send(self, msg: OutboundMsg) -> None:
         async with self._send_lock:
