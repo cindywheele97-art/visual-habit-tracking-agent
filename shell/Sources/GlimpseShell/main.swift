@@ -123,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 autoSendOn: self.autoSendEnabled, stale: self.overlay.model.stale
             )
         }
+        overlay.model.onFeedback = { [weak self] id, verdict, note in
+            guard let self else { return }
+            self.ipc.send(FeedbackMsg(suggestionId: id, regionId: self.regionId, verdict: verdict, note: note))
+        }
         overlay.setAutoSend(autoSendEnabled)
 
         contactReader.start()
@@ -293,8 +297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.setStatus(msg.state, detail: msg.detail)
         case .summary(let msg):
             overlay.showSummary(msg.text)
-        case .advisory:
-            break  // advisory messages are informational; no shell action required yet
+        case .advisory(let msg):
+            overlay.showAdvisory(msg.text)
         }
     }
 }
