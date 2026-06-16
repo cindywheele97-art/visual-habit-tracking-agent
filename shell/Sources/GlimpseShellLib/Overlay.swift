@@ -12,6 +12,8 @@ public final class OverlayModel: ObservableObject {
     @Published public var countdownRemaining: Int?
     @Published public var contact: String = ""
     public var onAct: ((_ suggestionId: String, _ text: String) -> Void)?
+    @Published public var advisory: String = ""
+    public var onFeedback: ((_ suggestionId: String, _ verdict: String, _ note: String) -> Void)?
 
     public init() {}
 }
@@ -83,6 +85,11 @@ public final class OverlayController {
     public func showContact(_ name: String) {
         DispatchQueue.main.async { self.model.contact = name }
     }
+
+    /// Safe to call from any thread: @Published mutation hops to main inside.
+    public func showAdvisory(_ text: String) {
+        DispatchQueue.main.async { self.model.advisory = text }
+    }
 }
 
 struct OverlayView: View {
@@ -133,29 +140,27 @@ struct OverlayView: View {
                     .background(Color.blue.opacity(0.08))
                     .cornerRadius(6)
             }
+            if !model.advisory.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("💡 \(model.advisory)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("知道了") { model.advisory = "" }
+                        .font(.caption2)
+                }
+                .padding(8)
+                .background(Color.yellow.opacity(0.12))
+                .cornerRadius(6)
+            }
             if model.items.isEmpty {
                 Text("等待新消息…").font(.callout).foregroundColor(.secondary)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(model.items) { item in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(item.text)
-                                .font(.system(size: 13))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button("复制") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(item.text, forType: .string)
-                                model.onCopy?(item.id)
-                            }
-                            Button(model.autoSendOn && !model.stale ? "发送" : "填入") {
-                                model.onAct?(item.id, item.text)
-                            }
-                        }
-                        .padding(8)
-                        .background(Color.gray.opacity(0.12))
-                        .cornerRadius(6)
+                        SuggestionCard(item: item, model: model)
                     }
                 }
             }
@@ -163,5 +168,55 @@ struct OverlayView: View {
         }
         .padding(10)
         .frame(minWidth: 320, minHeight: 200)
+    }
+}
+
+struct SuggestionCard: View {
+    let item: SuggestionItem
+    @ObservedObject var model: OverlayModel
+    @State private var showNote = false
+    @State private var note = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(item.text)
+                    .font(.system(size: 13))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("复制") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(item.text, forType: .string)
+                    model.onCopy?(item.id)
+                }
+                Button(model.autoSendOn && !model.stale ? "发送" : "填入") {
+                    model.onAct?(item.id, item.text)
+                }
+            }
+            HStack(spacing: 10) {
+                Button("👍") { model.onFeedback?(item.id, "up", "") }
+                    .buttonStyle(.plain)
+                Button("👎") { showNote.toggle() }
+                    .buttonStyle(.plain)
+                Spacer()
+            }
+            .font(.system(size: 13))
+            if showNote {
+                HStack(spacing: 6) {
+                    TextField("更好的回复 / 修改建议", text: $note)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                    Button("提交") {
+                        model.onFeedback?(item.id, "down", note)
+                        note = ""
+                        showNote = false
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.gray.opacity(0.12))
+        .cornerRadius(6)
     }
 }
