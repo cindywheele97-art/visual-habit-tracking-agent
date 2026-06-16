@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -116,8 +116,8 @@ class AdvisoryMsg(BaseModel):
     text: str
 
 
-InboundMsg = Union[OcrMsg, HelloMsg, CopiedMsg, ClickMsg, SummarizeRequest, RepliedMsg, FeedbackMsg]
-OutboundMsg = Union[AckMsg, SuggestionsMsg, StatusMsg, SummaryMsg, AdvisoryMsg]
+InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest | RepliedMsg | FeedbackMsg
+OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg | SummaryMsg | AdvisoryMsg
 
 _INBOUND: TypeAdapter[InboundMsg] = TypeAdapter(
     Annotated[InboundMsg, Field(discriminator="type")]
