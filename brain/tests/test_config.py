@@ -73,3 +73,20 @@ def test_memory_cfg_defaults() -> None:
     assert cfg.memory.recall_k == 5
     assert cfg.memory.embedding_model == "embeddinggemma"
     assert cfg.memory.enabled is True
+
+
+def test_feedback_log_default_expands_home() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.brain.feedback_log.endswith("/.glimpse/feedback.jsonl")
+    assert "~" not in cfg.brain.feedback_log
+
+
+def test_feedback_cfg_defaults() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.feedback.satisfaction_window == 20
+    assert cfg.feedback.advisory_threshold == 0.90
+    assert cfg.feedback.advisory_min_ratings == 20
