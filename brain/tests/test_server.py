@@ -38,6 +38,7 @@ def make_config(tmp_path: Path) -> Config:
                 "socket_path": str(tmp_path / "glimpse.sock"),
                 "event_log": str(tmp_path / "events.jsonl"),
                 "playbook": str(playbook),
+                "feedback_log": str(tmp_path / "feedback.jsonl"),
             },
             "tracker": {"settle_ms": 30},
             "memory": {"enabled": False},
@@ -402,3 +403,98 @@ async def test_server_no_contact_skips_capture(tmp_path: Path) -> None:
         writer.close()
     finally:
         task.cancel()
+
+
+async def test_feedback_writes_corpus_event_and_memory(tmp_path: Path) -> None:
+    from glimpse_brain.memory import InMemoryMemory
+
+    cfg = make_config(tmp_path)
+    memory = InMemoryMemory()
+    server = GlimpseServer(
+        cfg, llm=FakeLLM(), tool_client=FakeToolClient(), memory=memory
+    )
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+
+        # An OCR with a contact sets the current customer AND fires a suggestion,
+        # so a snapshot (conversation + draft) exists for the feedback to resolve.
+        ocr = (
+            '{"type":"ocr","seq":1,"ts":"2026-06-11T12:00:00Z","region_id":"region-1",'
+            '"contact":"老王",'
+            '"blocks":[{"text":"能便宜点吗","x0":0.05,"x1":0.4,"conf":0.95}]}\n'
+        )
+        writer.write(ocr.encode())
+        await writer.drain()
+        sug = await read_until(reader, "suggestions")
+        sid = sug["items"][0]["id"]
+
+        writer.write(
+            (
+                '{"type":"feedback","suggestion_id":"%s","region_id":"region-1",'
+                '"verdict":"down","note":"强调赠品"}\n' % sid
+            ).encode()
+        )
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        corpus = (tmp_path / "feedback.jsonl").read_text(encoding="utf-8").strip()
+        assert "强调赠品" in corpus
+        assert "能便宜点吗" in corpus
+        events = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
+        assert '"kind": "feedback"' in events
+        hits = await memory.recall("老王", "修正", k=5)
+        assert any("强调赠品" in h.text for h in hits)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_satisfaction_advisory_fires_on_threshold(tmp_path: Path) -> None:
+    cfg = Config.model_validate(
+        {
+            "brain": {
+                "socket_path": str(tmp_path / "glimpse.sock"),
+                "event_log": str(tmp_path / "events.jsonl"),
+                "playbook": str(tmp_path / "pb.md"),
+                "feedback_log": str(tmp_path / "feedback.jsonl"),
+            },
+            "tracker": {"settle_ms": 30},
+            "memory": {"enabled": False},
+            "feedback": {
+                "satisfaction_window": 5,
+                "advisory_threshold": 1.0,
+                "advisory_min_ratings": 3,
+            },
+        }
+    )
+    (tmp_path / "pb.md").write_text("满99包邮", encoding="utf-8")
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        for _ in range(3):
+            writer.write(
+                b'{"type":"feedback","suggestion_id":"s1","region_id":"r",'
+                b'"verdict":"up","note":""}\n'
+            )
+            await writer.drain()
+        adv = await read_until(reader, "advisory")
+        assert "自动发送" in adv["text"]
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

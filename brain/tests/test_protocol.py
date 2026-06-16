@@ -149,3 +149,39 @@ def test_ocr_contact_defaults_empty_and_roundtrips() -> None:
 
     msg = OcrMsg(seq=2, ts="t", region_id="r", blocks=[], contact="小明")
     assert parse_inbound(to_line(msg)).contact == "小明"
+
+
+def test_feedback_msg_round_trips() -> None:
+    from glimpse_brain.protocol import FeedbackMsg
+
+    msg = FeedbackMsg(suggestion_id="s1", region_id="region-1", verdict="down", note="强调赠品")
+    parsed = parse_inbound(to_line(msg).strip())
+    assert isinstance(parsed, FeedbackMsg)
+    assert parsed.verdict == "down"
+    assert parsed.note == "强调赠品"
+
+
+def test_feedback_msg_note_defaults_empty() -> None:
+    from glimpse_brain.protocol import FeedbackMsg
+
+    parsed = parse_inbound(
+        '{"type":"feedback","suggestion_id":"s1","region_id":"r","verdict":"up"}'
+    )
+    assert isinstance(parsed, FeedbackMsg)
+    assert parsed.note == ""
+
+
+def test_feedback_msg_rejects_bad_verdict() -> None:
+    with pytest.raises(ProtocolError):
+        parse_inbound(
+            '{"type":"feedback","suggestion_id":"s1","region_id":"r","verdict":"meh"}'
+        )
+
+
+def test_advisory_msg_serializes_single_line() -> None:
+    from glimpse_brain.protocol import AdvisoryMsg
+
+    line = to_line(AdvisoryMsg(text="满意率已达标"))
+    assert line.endswith("\n")
+    assert line.count("\n") == 1
+    assert '"type":"advisory"' in line

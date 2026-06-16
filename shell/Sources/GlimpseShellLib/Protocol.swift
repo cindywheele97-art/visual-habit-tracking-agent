@@ -92,6 +92,28 @@ public struct RepliedMsg: Codable {
     }
 }
 
+public struct FeedbackMsg: Codable {
+    public var type = "feedback"
+    public var suggestionId: String
+    public var regionId: String
+    public var verdict: String
+    public var note: String
+
+    public init(suggestionId: String, regionId: String, verdict: String, note: String = "") {
+        self.suggestionId = suggestionId
+        self.regionId = regionId
+        self.verdict = verdict
+        self.note = note
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case suggestionId = "suggestion_id"
+        case regionId = "region_id"
+        case verdict, note
+    }
+}
+
 public struct ClickMsg: Codable {
     public var type = "click"
     public var ts: String
@@ -120,6 +142,15 @@ public struct SummarizeRequest: Codable {
 
     enum CodingKeys: String, CodingKey {
         case type
+    }
+}
+
+public struct AdvisoryMsg: Codable {
+    // Decode-only: the wire "type" key is consumed by Wire.decodeBrainMessage's probe.
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
     }
 }
 
@@ -186,6 +217,7 @@ public enum BrainMessage {
     case suggestions(SuggestionsMsg)
     case status(StatusMsg)
     case summary(SummaryMsg)
+    case advisory(AdvisoryMsg)
 }
 
 // MARK: - Wire encoding
@@ -215,6 +247,8 @@ public enum Wire {
             return (try? decoder.decode(StatusMsg.self, from: line)).map(BrainMessage.status)
         case "summary":
             return (try? decoder.decode(SummaryMsg.self, from: line)).map(BrainMessage.summary)
+        case "advisory":
+            return (try? decoder.decode(AdvisoryMsg.self, from: line)).map(BrainMessage.advisory)
         default:
             return nil
         }

@@ -13,8 +13,9 @@ class BrainCfg(BaseModel):
     socket_path: str = Field(default_factory=lambda: str(Path("~/.glimpse/glimpse.sock").expanduser()))
     event_log: str = Field(default_factory=lambda: str(Path("~/.glimpse/events.jsonl").expanduser()))
     playbook: str = Field(default_factory=lambda: str(Path("~/.glimpse/playbook.md").expanduser()))
+    feedback_log: str = Field(default_factory=lambda: str(Path("~/.glimpse/feedback.jsonl").expanduser()))
 
-    @field_validator("socket_path", "event_log", "playbook", mode="before")
+    @field_validator("socket_path", "event_log", "playbook", "feedback_log", mode="before")
     @classmethod
     def _expand(cls, v: str) -> str:
         return str(Path(v).expanduser())
@@ -59,6 +60,13 @@ class MemoryCfg(BaseModel):
         return str(Path(v).expanduser())
 
 
+class FeedbackCfg(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    satisfaction_window: int = Field(default=20, ge=1)
+    advisory_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
+    advisory_min_ratings: int = Field(default=20, ge=1)
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     brain: BrainCfg = Field(default_factory=BrainCfg)
@@ -66,6 +74,7 @@ class Config(BaseModel):
     tracker: TrackerCfg = Field(default_factory=TrackerCfg)
     redaction: RedactionCfg = Field(default_factory=RedactionCfg)
     memory: MemoryCfg = Field(default_factory=MemoryCfg)
+    feedback: FeedbackCfg = Field(default_factory=FeedbackCfg)
 
 
 def load_config(path: Path | None) -> Config:
