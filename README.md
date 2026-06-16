@@ -182,3 +182,40 @@ see it (Claude vision — no extra model) and reason with the playbook + memory.
 1. Send a product photo in WeChat's watched chat.
 2. Confirm the agent calls `look_at_conversation` (in `events.jsonl` `agent_turn`
    tools_used) and drafts a reply that references what's in the photo.
+
+## Feedback loop — rate, correct, and learn
+
+Each suggestion card has 👍 / 👎 buttons; 👎 reveals a "更好的回复 / 修改建议"
+field. Feedback is captured by the brain (model-free, fail-soft) into three places:
+a redacted `feedback` audit event, a durable corpus (`~/.glimpse/feedback.jsonl`),
+and — when a customer is known — that customer's memory (so the agent recalls the
+correction next time). A rolling satisfaction metric emits a **dismissable advisory**
+once quality is consistently high; it only *recommends* enabling 自动发送 and can
+never flip the toggle itself (per-message quality still gates every send).
+
+- Config (`feedback` table in `~/.glimpse/glimpse.toml`): `satisfaction_window`
+  (default 20), `advisory_threshold` (0.90), `advisory_min_ratings` (20).
+
+### Distilling feedback into eval cases (offline, billable)
+
+Corrections become regression tests via an offline command (real model calls):
+
+    cd brain && PYTHONPATH=. ./.venv/bin/python -m evals distill    # needs ANTHROPIC_API_KEY
+    # review a generated candidate, then promote it into the gating set:
+    cd brain && PYTHONPATH=. ./.venv/bin/python -m evals promote fb-<id>
+    cd brain && PYTHONPATH=. ./.venv/bin/python -m evals             # now gates on it
+
+`distill` turns each correction into a candidate case under
+`brain/evals/cases/candidates/` (gitignored, **not** run by the default eval).
+Only `promote` (a deliberate human step — review the distilled `must`/`must_not`
+first) moves a case into `brain/evals/cases/`, where it gates future runs. `distill`
+is idempotent: re-running skips corrections already turned into candidates.
+
+### Manual E2E
+1. Rate a suggestion 👍 and 👎; on 👎 type a correction and 提交.
+2. Confirm `~/.glimpse/feedback.jsonl` gains a line per rating (note + conversation
+   redacted) and `events.jsonl` has a `feedback` event.
+3. With a customer set (👤), 👎+correction → return to that chat later and confirm
+   the agent recalls it (`recall_customer` in `agent_turn` tools_used).
+4. After enough 👍 (≥ `advisory_min_ratings` at ≥ `advisory_threshold`), a 💡
+   advisory line appears and is dismissable — and the 自动发送 toggle does NOT change.
