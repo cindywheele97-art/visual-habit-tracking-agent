@@ -148,3 +148,25 @@ func cgPointFlipsCocoaYToTopLeftOrigin() {
     #expect(cg.x == 100)
     #expect(cg.y == h - 100)
 }
+
+@Test("FeedbackMsg encodes snake_case keys")
+func feedbackMsgEncodesSnakeCase() throws {
+    let data = try Wire.encodeLine(
+        FeedbackMsg(suggestionId: "s1", regionId: "r", verdict: "down", note: "强调赠品")
+    )
+    let line = String(decoding: data, as: UTF8.self)
+    #expect(line.contains("\"suggestion_id\":\"s1\""))
+    #expect(line.contains("\"region_id\":\"r\""))
+    #expect(line.contains("\"verdict\":\"down\""))
+    #expect(line.contains("\"type\":\"feedback\""))
+}
+
+@Test("AdvisoryMsg decodes via Wire")
+func advisoryMsgDecodes() throws {
+    let line = Data("{\"type\":\"advisory\",\"text\":\"满意率已达标\"}".utf8)
+    guard case .advisory(let msg)? = Wire.decodeBrainMessage(line) else {
+        Issue.record("expected .advisory")
+        return
+    }
+    #expect(msg.text == "满意率已达标")
+}

@@ -293,6 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.setStatus(msg.state, detail: msg.detail)
         case .summary(let msg):
             overlay.showSummary(msg.text)
+        case .advisory:
+            break  // advisory messages are informational; no shell action required yet
         }
     }
 }
