@@ -39,6 +39,7 @@ def make_config(tmp_path: Path) -> Config:
                 "event_log": str(tmp_path / "events.jsonl"),
                 "playbook": str(playbook),
                 "feedback_log": str(tmp_path / "feedback.jsonl"),
+                "knowledge_dir": str(tmp_path / "knowledge"),
             },
             "tracker": {"settle_ms": 30},
             "memory": {"enabled": False},

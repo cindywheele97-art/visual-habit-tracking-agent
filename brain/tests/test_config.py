@@ -90,3 +90,11 @@ def test_feedback_cfg_defaults() -> None:
     assert cfg.feedback.satisfaction_window == 20
     assert cfg.feedback.advisory_threshold == 0.90
     assert cfg.feedback.advisory_min_ratings == 20
+
+
+def test_knowledge_dir_default_expands_home() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.brain.knowledge_dir.endswith("/.glimpse/knowledge")
+    assert "~" not in cfg.brain.knowledge_dir

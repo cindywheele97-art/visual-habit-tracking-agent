@@ -1,32 +1,38 @@
-"""Knowledge grounding the agent retrieves via a tool. v1 returns whole files;
-the multimodal-ready signature (query) lets later impls do real retrieval."""
+"""Knowledge the agent retrieves via tools. An OKF catalog: the agent reads an
+index (table of contents), then reads docs by id. Replaces the v1 whole-file
+FileKnowledgeBase."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Protocol
 
+from glimpse_brain.okf import load_catalog
+
 
 class KnowledgeBase(Protocol):
-    def grounding(self, query: str) -> str: ...
+    def index(self) -> str: ...
+    def read(self, doc_id: str) -> str: ...
 
 
-class FileKnowledgeBase:
-    """Whole-file grounding: playbook (+ learnings if present), re-read each call."""
+class OkfKnowledgeBase:
+    """OKF-catalog knowledge. Re-scans the catalog each call so hand-edits to the
+    markdown take effect live. Falls back to a single legacy playbook.md."""
 
-    def __init__(self, playbook_path: Path, learnings_path: Path | None = None) -> None:
-        self._playbook_path = playbook_path
-        self._learnings_path = learnings_path
+    def __init__(self, catalog_dir: Path, legacy_playbook: Path | None = None) -> None:
+        self._catalog_dir = catalog_dir
+        self._legacy_playbook = legacy_playbook
 
-    def grounding(self, query: str) -> str:  # query ignored in v1 (multimodal-ready)
-        playbook = (
-            self._playbook_path.read_text(encoding="utf-8")
-            if self._playbook_path.exists()
-            else "(playbook file missing)"
-        )
-        parts = [f"<playbook>\n{playbook}\n</playbook>"]
-        if self._learnings_path is not None and self._learnings_path.exists():
-            learnings = self._learnings_path.read_text(encoding="utf-8").strip()
-            if learnings:
-                parts.append(f"<learnings>\n{learnings}\n</learnings>")
-        return "\n".join(parts)
+    def index(self) -> str:
+        docs = load_catalog(self._catalog_dir, self._legacy_playbook)
+        if not docs:
+            return "（知识库为空）"
+        ordered = sorted(docs, key=lambda d: (d.type, d.id))
+        lines = [f"- [{d.type}] {d.id}: {d.description}" for d in ordered]
+        return "知识库目录：\n" + "\n".join(lines)
+
+    def read(self, doc_id: str) -> str:
+        for doc in load_catalog(self._catalog_dir, self._legacy_playbook):
+            if doc.id == doc_id:
+                return f"# {doc.title}\n\n{doc.body}"
+        return f"（未找到文档：{doc_id}）"

@@ -14,8 +14,9 @@ class BrainCfg(BaseModel):
     event_log: str = Field(default_factory=lambda: str(Path("~/.glimpse/events.jsonl").expanduser()))
     playbook: str = Field(default_factory=lambda: str(Path("~/.glimpse/playbook.md").expanduser()))
     feedback_log: str = Field(default_factory=lambda: str(Path("~/.glimpse/feedback.jsonl").expanduser()))
+    knowledge_dir: str = Field(default_factory=lambda: str(Path("~/.glimpse/knowledge").expanduser()))
 
-    @field_validator("socket_path", "event_log", "playbook", "feedback_log", mode="before")
+    @field_validator("socket_path", "event_log", "playbook", "feedback_log", "knowledge_dir", mode="before")
     @classmethod
     def _expand(cls, v: str) -> str:
         return str(Path(v).expanduser())

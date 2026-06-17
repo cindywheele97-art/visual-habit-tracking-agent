@@ -21,7 +21,7 @@ from glimpse_brain.evals_pkg.distill import (
 from glimpse_brain.evals_pkg.harness import load_cases, summarize
 from glimpse_brain.evals_pkg.runner import run_case
 from glimpse_brain.feedback import FeedbackLog
-from glimpse_brain.knowledge import FileKnowledgeBase
+from glimpse_brain.knowledge import OkfKnowledgeBase
 from glimpse_brain.llm import AnthropicLLM, RateLimiter
 from glimpse_brain.redaction import Redactor
 from glimpse_brain.server import AGENT_SYSTEM
@@ -35,7 +35,10 @@ async def _run() -> None:
     agent = Agent(
         client=AnthropicToolUseClient(cfg.llm.model),
         system=AGENT_SYSTEM,
-        knowledge=FileKnowledgeBase(playbook_path=Path(cfg.brain.playbook)),
+        knowledge=OkfKnowledgeBase(
+            catalog_dir=Path(cfg.brain.knowledge_dir),
+            legacy_playbook=Path(cfg.brain.playbook),
+        ),
         redactor=Redactor(cfg.redaction.patterns),
         limiter=RateLimiter(cfg.llm.max_calls_per_minute),
         max_suggestions=cfg.llm.max_suggestions,

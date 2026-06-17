@@ -11,7 +11,7 @@ from glimpse_brain.parsing import parse_suggestions
 from glimpse_brain.llm import RateLimiter
 from glimpse_brain.memory import Memory
 from glimpse_brain.memory_tools import RecallCustomerTool, RememberAboutCustomerTool
-from glimpse_brain.tools import KnowledgeBaseTool, Tool
+from glimpse_brain.tools import KnowledgeBaseTool, ReadKnowledgeTool, Tool
 from glimpse_brain.tooluse import (
     AgentStep,
     ToolImage,
@@ -62,7 +62,10 @@ class Agent:
         self._max_iterations = max_iterations
         self._memory = memory
         self._recall_k = recall_k
-        self._base_tools: list[Tool] = [KnowledgeBaseTool(knowledge)]
+        self._base_tools: list[Tool] = [
+            KnowledgeBaseTool(knowledge),
+            ReadKnowledgeTool(knowledge),
+        ]
 
     async def suggest(
         self, tail: list[str], customer: str | None = None, image: str | None = None

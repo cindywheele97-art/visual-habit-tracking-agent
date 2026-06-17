@@ -16,7 +16,9 @@ cd ../shell && swift build
 
 # Your playbook (edit it — suggestions are grounded in this file)
 # (run from shell/, i.e. right after the previous step)
-mkdir -p ~/.glimpse && cp ../playbook/playbook.md ~/.glimpse/playbook.md
+mkdir -p ~/.glimpse
+cp -r ../playbook/knowledge ~/.glimpse/knowledge   # OKF catalog (primary)
+cp ../playbook/playbook.md ~/.glimpse/playbook.md  # legacy fallback
 ```
 
 ## Run
@@ -219,3 +221,12 @@ is idempotent: re-running skips corrections already turned into candidates.
    the agent recalls it (`recall_customer` in `agent_turn` tools_used).
 4. After enough 👍 (≥ `advisory_min_ratings` at ≥ `advisory_threshold`), a 💡
    advisory line appears and is dismissable — and the 自动发送 toggle does NOT change.
+
+## Knowledge base — OKF catalog
+
+Grounding lives in `~/.glimpse/knowledge/` as OKF docs (markdown + YAML
+frontmatter: `id`, `title`, `type`, `tags`, `description`). The agent calls
+`knowledge_base` to see the index, then `read_knowledge{id}` for the docs it
+needs. Edit/add `.md` files there (nest into subfolders if you like — the catalog
+is scanned recursively); changes are picked up live. If the directory is absent,
+the agent falls back to the single `~/.glimpse/playbook.md`.
