@@ -1,30 +1,35 @@
 from __future__ import annotations
 
-from glimpse_brain.tools import KnowledgeBaseTool
+from glimpse_brain.tools import KnowledgeBaseTool, ReadKnowledgeTool
 
 
 class FakeKB:
-    def grounding(self, query: str) -> str:
-        return f"grounding-for:{query}"
+    def index(self) -> str:
+        return "知识库目录：\n- [policy] shipping: 包邮"
+
+    def read(self, doc_id: str) -> str:
+        return f"read:{doc_id}"
 
 
-async def test_kb_tool_advertises_schema() -> None:
+async def test_knowledge_base_tool_returns_index() -> None:
     tool = KnowledgeBaseTool(FakeKB())
     assert tool.name == "knowledge_base"
-    assert tool.description
-    assert tool.input_schema["type"] == "object"
-    assert "query" in tool.input_schema["properties"]
-    assert tool.input_schema.get("required", []) == []  # query optional
-
-
-async def test_kb_tool_run_returns_grounding() -> None:
-    tool = KnowledgeBaseTool(FakeKB())
-    out = await tool.run({"query": "包邮"})
-    assert out == "grounding-for:包邮"
-
-
-async def test_kb_tool_run_tolerates_missing_query() -> None:
-    # WHY: the model may call the tool with no input; must not KeyError.
-    tool = KnowledgeBaseTool(FakeKB())
+    assert tool.input_schema.get("required", []) == []  # no args needed
     out = await tool.run({})
-    assert out == "grounding-for:"
+    assert "知识库目录" in out
+
+
+async def test_read_knowledge_tool_reads_by_id() -> None:
+    tool = ReadKnowledgeTool(FakeKB())
+    assert tool.name == "read_knowledge"
+    assert tool.input_schema["properties"]["id"]["type"] == "string"
+    assert tool.input_schema["required"] == ["id"]
+    out = await tool.run({"id": "shipping"})
+    assert out == "read:shipping"
+
+
+async def test_read_knowledge_tool_tolerates_missing_id() -> None:
+    # WHY: the model may emit the tool call with no input; must not KeyError.
+    tool = ReadKnowledgeTool(FakeKB())
+    out = await tool.run({})
+    assert out == "read:"

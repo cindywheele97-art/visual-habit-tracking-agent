@@ -19,19 +19,29 @@ class Tool(Protocol):
 
 class KnowledgeBaseTool:
     name = "knowledge_base"
-    description = (
-        "获取产品信息、政策和话术。起草任何依赖这些信息的回复前应先调用。"
-    )
+    description = "返回知识库目录（各文档 id/类型/摘要）；先调用它了解有哪些资料，再用 read_knowledge 读取相关文档。"
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+
+    def __init__(self, knowledge: KnowledgeBase) -> None:
+        self._knowledge = knowledge
+
+    async def run(self, input: dict[str, Any]) -> str:
+        return self._knowledge.index()
+
+
+class ReadKnowledgeTool:
+    name = "read_knowledge"
+    description = "按 id 读取某篇知识库文档的完整内容。可并行读取多篇。"
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "要查询的问题或关键词"}
+            "id": {"type": "string", "description": "文档 id（见 knowledge_base 目录）"}
         },
-        "required": [],
+        "required": ["id"],
     }
 
     def __init__(self, knowledge: KnowledgeBase) -> None:
         self._knowledge = knowledge
 
     async def run(self, input: dict[str, Any]) -> str:
-        return self._knowledge.grounding(input.get("query", ""))
+        return self._knowledge.read(input.get("id", ""))
