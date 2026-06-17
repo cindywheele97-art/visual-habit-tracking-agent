@@ -165,7 +165,7 @@ async def test_agent_omits_memory_tools_without_customer() -> None:
         max_suggestions=3, max_iterations=4, memory=InMemoryMemory(), recall_k=5,
     )
     await agent.suggest(["客户: 在吗"], customer=None)
-    assert captured["tool_names"] == ["knowledge_base"]  # no memory tools
+    assert captured["tool_names"] == ["knowledge_base", "read_knowledge"]  # no memory tools
 
 
 async def test_agent_omits_memory_tools_when_memory_disabled() -> None:
@@ -186,7 +186,7 @@ async def test_agent_omits_memory_tools_when_memory_disabled() -> None:
         max_suggestions=3, max_iterations=4, memory=None, recall_k=5,
     )
     await agent.suggest(["客户: 在吗"], customer="小明")
-    assert captured["tool_names"] == ["knowledge_base"]
+    assert captured["tool_names"] == ["knowledge_base", "read_knowledge"]
 
 
 async def test_agent_looks_at_image_when_available() -> None:
@@ -236,3 +236,52 @@ async def test_agent_omits_look_tool_without_image() -> None:
     )
     await agent.suggest(["客户: 在吗"], image=None)
     assert "look_at_conversation" not in captured["names"]
+
+
+async def test_agent_uses_index_then_read() -> None:
+    from glimpse_brain.agent import Agent
+    from glimpse_brain.tooluse import AgentStep, ToolCall
+    from glimpse_brain.llm import RateLimiter
+    from glimpse_brain.redaction import Redactor
+
+    class FakeKB:
+        def __init__(self) -> None:
+            self.read_calls: list[str] = []
+
+        def index(self) -> str:
+            return "知识库目录：\n- [policy] shipping: 包邮"
+
+        def read(self, doc_id: str) -> str:
+            self.read_calls.append(doc_id)  # spy: proves the read tool ran
+            return f"read:{doc_id}"
+
+    class ScriptedClient:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            self._calls += 1
+            if self._calls == 1:
+                return AgentStep(tool_calls=(ToolCall(id="t1", name="knowledge_base", input={}),))
+            if self._calls == 2:
+                return AgentStep(tool_calls=(ToolCall(id="t2", name="read_knowledge", input={"id": "shipping"}),))
+            return AgentStep(final_text='["好的，亲，满99包邮哦"]')
+
+    kb = FakeKB()
+    agent = Agent(
+        client=ScriptedClient(),
+        system="sys",
+        knowledge=kb,
+        redactor=Redactor([]),
+        limiter=RateLimiter(60),
+        max_suggestions=3,
+        max_iterations=5,
+    )
+    result = await agent.suggest(["客户: 包邮吗"])
+    # The agent loop appends every called tool NAME to tools_used BEFORE the
+    # registry lookup, so "read_knowledge" in tools_used would be true even if the
+    # tool were unregistered. The spy proves the tool was actually FOUND and RUN —
+    # which only happens once ReadKnowledgeTool is registered in _base_tools.
+    assert kb.read_calls == ["shipping"]
+    assert "knowledge_base" in result.tools_used
+    assert result.drafts == ["好的，亲，满99包邮哦"]
