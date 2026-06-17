@@ -10,8 +10,11 @@ from glimpse_brain.tooluse import AgentStep, ToolCall
 
 
 class FakeKB:
-    def grounding(self, query: str) -> str:
+    def index(self) -> str:
         return "政策: 满99包邮"
+
+    def read(self, doc_id: str) -> str:
+        return f"read:{doc_id}"
 
 
 class ScriptedClient:
@@ -62,7 +65,10 @@ async def test_agent_tolerates_tool_failure_and_recovers() -> None:
     # WHY: a tool raising (I/O/network) must not kill the suggestion pass — the
     # error is fed back so the model can still finalize a best-effort draft.
     class BoomKB:
-        def grounding(self, query: str) -> str:
+        def index(self) -> str:
+            raise RuntimeError("kb down")
+
+        def read(self, doc_id: str) -> str:
             raise RuntimeError("kb down")
 
     client = ScriptedClient([
