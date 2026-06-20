@@ -43,6 +43,7 @@ def make_config(tmp_path: Path) -> Config:
             },
             "tracker": {"settle_ms": 30},
             "memory": {"enabled": False},
+            "sku": {"enabled": False},
         }
     )
 
@@ -456,6 +457,30 @@ async def test_feedback_writes_corpus_event_and_memory(tmp_path: Path) -> None:
             await task
         except asyncio.CancelledError:
             pass
+
+
+def test_build_sku_disabled_returns_none(tmp_path: Path) -> None:
+    from glimpse_brain.server import GlimpseServer
+
+    cfg = make_config(tmp_path)  # sku disabled
+    assert GlimpseServer._build_sku(cfg) is None
+
+
+def test_build_sku_missing_files_returns_none(tmp_path: Path) -> None:
+    from glimpse_brain.config import Config
+    from glimpse_brain.server import GlimpseServer
+
+    cfg = Config.model_validate(
+        {
+            "sku": {
+                "enabled": True,
+                "model_path": str(tmp_path / "nope.onnx"),
+                "index_path": str(tmp_path / "nope.npz"),
+            }
+        }
+    )
+    # Missing model/index → load raises → fail-soft to None (SKU disabled).
+    assert GlimpseServer._build_sku(cfg) is None
 
 
 async def test_satisfaction_advisory_fires_on_threshold(tmp_path: Path) -> None:
