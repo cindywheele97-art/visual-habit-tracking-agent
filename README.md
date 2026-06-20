@@ -230,3 +230,37 @@ frontmatter: `id`, `title`, `type`, `tags`, `description`). The agent calls
 needs. Edit/add `.md` files there (nest into subfolders if you like — the catalog
 is scanned recursively); changes are picked up live. If the directory is absent,
 the agent falls back to the single `~/.glimpse/playbook.md`.
+
+## SKU visual matching
+
+When a customer sends a product/售后 photo, the agent can call `match_sku` to find
+the nearest catalog SKUs (Chinese-CLIP image embeddings via onnxruntime — no torch),
+then `read_knowledge` on the candidate ids to confirm and reply. Fail-soft: if the
+model or index is absent, the agent falls back to describing the photo (pure P6).
+
+**One-time model setup** (the ONNX file is not committed — it's large):
+Export the Chinese-CLIP **ViT-B/16 image** encoder to ONNX (see the Chinese-CLIP
+repo's deployment guide, or download a pre-exported ONNX) and place it at
+`~/.glimpse/sku/cnclip_vitb16.img.onnx`.
+
+**Build the index** from your product images. The filename stem is the SKU id, which
+must equal the OKF product doc id (e.g. `example-a.jpg` ↔ `playbook/knowledge/example-a.md`):
+
+```bash
+cd brain
+.venv/bin/python -m glimpse_brain.sku.build /path/to/product-images ~/.glimpse/sku/index.npz
+```
+
+Config (`sku` table in `~/.glimpse/glimpse.toml`): `enabled`, `model_path`,
+`index_path`, `top_k` (default 5), `min_score` (default 0.0).
+
+**Verify end-to-end** (opt-in, needs the real model + a few product images):
+
+```bash
+cd brain
+SKU_MODEL_PATH=~/.glimpse/sku/cnclip_vitb16.img.onnx \
+SKU_IMAGE_DIR=/path/to/product-images \
+SKU_QUERY_IMAGE=/path/to/a-customer-photo.jpg \
+SKU_EXPECTED_ID=example-a \
+.venv/bin/python -m pytest tests/test_sku_integration.py -m integration -v
+```

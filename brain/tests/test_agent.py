@@ -291,3 +291,56 @@ async def test_agent_uses_index_then_read() -> None:
     assert kb.read_calls == ["shipping"]
     assert "knowledge_base" in result.tools_used
     assert result.drafts == ["好的，亲，满99包邮哦"]
+
+
+async def test_agent_matches_sku_then_reads_doc() -> None:
+    import base64
+
+    from glimpse_brain.tooluse import AgentStep, ToolCall
+
+    class FakeMatcher:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def match(self, jpeg_bytes: bytes):
+            self.calls += 1
+            return [("example-a", 0.82)]
+
+    matcher = FakeMatcher()
+    client = ScriptedClient([
+        AgentStep(tool_calls=(ToolCall(id="m1", name="match_sku", input={}),)),
+        AgentStep(tool_calls=(ToolCall(id="r1", name="read_knowledge", input={"id": "example-a"}),)),
+        AgentStep(final_text='["这是示例商品A，亲～"]'),
+    ])
+    agent = Agent(
+        client=client, system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=5, sku=matcher,
+    )
+    img = base64.b64encode(b"jpeg").decode()
+    result = await agent.suggest(["客户: 这是什么型号"], image=img)
+    assert matcher.calls == 1  # match_sku actually executed (registered + run)
+    assert "match_sku" in result.tools_used
+    assert result.drafts == ["这是示例商品A，亲～"]
+
+
+async def test_agent_omits_match_sku_without_matcher() -> None:
+    import base64
+
+    from glimpse_brain.tooluse import AgentStep
+
+    captured = {}
+
+    class CaptureToolsClient:
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            captured["tool_names"] = [t.name for t in tools]
+            return AgentStep(final_text='["在的"]')
+
+    agent = Agent(
+        client=CaptureToolsClient(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4, sku=None,
+    )
+    await agent.suggest(["客户: 在吗"], image=base64.b64encode(b"jpeg").decode())
+    assert "match_sku" not in captured["tool_names"]  # no matcher → not offered
+    assert "look_at_conversation" in captured["tool_names"]  # but vision still is

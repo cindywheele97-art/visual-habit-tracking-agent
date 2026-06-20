@@ -22,6 +22,8 @@ from glimpse_brain.tooluse import (
     UserMessage,
 )
 from glimpse_brain.vision_tool import LookTool
+from glimpse_brain.sku.matcher import SkuMatcher
+from glimpse_brain.sku.tool import MatchSkuTool
 from glimpse_brain.redaction import Redactor
 
 USER_TEMPLATE = """\
@@ -53,6 +55,7 @@ class Agent:
         max_iterations: int,
         memory: Memory | None = None,
         recall_k: int = 5,
+        sku: SkuMatcher | None = None,
     ) -> None:
         self._client = client
         self._system = system
@@ -62,6 +65,7 @@ class Agent:
         self._max_iterations = max_iterations
         self._memory = memory
         self._recall_k = recall_k
+        self._sku = sku
         self._base_tools: list[Tool] = [
             KnowledgeBaseTool(knowledge),
             ReadKnowledgeTool(knowledge),
@@ -80,6 +84,8 @@ class Agent:
         # vision needs no subsystem: the image is passed straight into LookTool.
         if image:
             tools.append(LookTool(image))
+        if image and self._sku is not None:
+            tools.append(MatchSkuTool(self._sku, image))
         registry = {t.name: t for t in tools}
         conversation = self._redactor.redact("\n".join(tail))
         transcript: list[TranscriptEntry] = [

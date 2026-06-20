@@ -98,3 +98,15 @@ def test_knowledge_dir_default_expands_home() -> None:
     cfg = Config()
     assert cfg.brain.knowledge_dir.endswith("/.glimpse/knowledge")
     assert "~" not in cfg.brain.knowledge_dir
+
+
+def test_sku_cfg_defaults_and_expand() -> None:
+    from glimpse_brain.config import Config
+
+    cfg = Config()
+    assert cfg.sku.enabled is True
+    assert cfg.sku.top_k == 5
+    assert cfg.sku.min_score == 0.0
+    assert cfg.sku.model_path.endswith("/.glimpse/sku/cnclip_vitb16.img.onnx")
+    assert cfg.sku.index_path.endswith("/.glimpse/sku/index.npz")
+    assert "~" not in cfg.sku.model_path
