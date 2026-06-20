@@ -68,6 +68,24 @@ class FeedbackCfg(BaseModel):
     advisory_min_ratings: int = Field(default=20, ge=1)
 
 
+class SkuCfg(BaseModel):
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    enabled: bool = True
+    model_path: str = Field(
+        default_factory=lambda: str(Path("~/.glimpse/sku/cnclip_vitb16.img.onnx").expanduser())
+    )
+    index_path: str = Field(
+        default_factory=lambda: str(Path("~/.glimpse/sku/index.npz").expanduser())
+    )
+    top_k: int = Field(default=5, ge=1, le=20)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @field_validator("model_path", "index_path", mode="before")
+    @classmethod
+    def _expand(cls, v: str) -> str:
+        return str(Path(v).expanduser())
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     brain: BrainCfg = Field(default_factory=BrainCfg)
@@ -76,6 +94,7 @@ class Config(BaseModel):
     redaction: RedactionCfg = Field(default_factory=RedactionCfg)
     memory: MemoryCfg = Field(default_factory=MemoryCfg)
     feedback: FeedbackCfg = Field(default_factory=FeedbackCfg)
+    sku: SkuCfg = Field(default_factory=SkuCfg)
 
 
 def load_config(path: Path | None) -> Config:
