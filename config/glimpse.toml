@@ -9,6 +9,9 @@ playbook = "~/.glimpse/playbook.md"
 model = "claude-sonnet-4-6"
 max_calls_per_minute = 6
 max_suggestions = 3
+# Upload conversation screenshots to the LLM (look_at_conversation)?
+# Pixels bypass [redaction] regexes entirely — keep off unless you accept that.
+send_images = false
 
 [tracker]
 settle_ms = 800

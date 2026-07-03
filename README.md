@@ -37,8 +37,12 @@ appear in the Glimpse panel; click 复制 and paste into your chat app.
 
 ## Privacy
 
-- Screenshots never leave the shell process and never touch disk.
-- Only regex-redacted text (config `[redaction]`) is sent to the LLM.
+- Screenshots never touch disk. A downscaled screenshot of the watched region is
+  streamed to the **local** brain process (used for on-device SKU matching); it
+  is uploaded to the Anthropic API only if you opt in with `[llm] send_images =
+  true` (default: off).
+- Text sent to the LLM is regex-redacted first (config `[redaction]`). Pixels
+  cannot be regex-redacted — that is why screenshot upload is opt-in.
 - The event log (`~/.glimpse/events.jsonl`) stores redacted text only.
 
 ## Tests
@@ -170,10 +174,14 @@ draw a box over WeChat's contact-name header); the detected name shows as
 
 ## Phase 6 — the agent can see
 
-When a customer sends a photo, the brain now sends a downscaled screenshot of the
-conversation region (`OcrMsg.image`); the agent can call `look_at_conversation` to
-see it (Claude vision — no extra model) and reason with the playbook + memory.
+When a customer sends a photo, the shell sends a downscaled screenshot of the
+conversation region (`OcrMsg.image`) to the local brain; the agent can call
+`look_at_conversation` to see it (Claude vision — no extra model) and reason
+with the playbook + memory.
 
+- **Opt-in**: `look_at_conversation` uploads the raw screenshot to the Anthropic
+  API, bypassing regex redaction. It is only offered to the agent when
+  `[llm] send_images = true` is set in the brain config (default: off).
 - The agent decides when to look, so vision tokens are spent only when a photo
   matters; everything is fail-soft to text-only.
 - v1 sees the inline chat thumbnail (enough for an obvious product/damage). Precise
@@ -181,8 +189,10 @@ see it (Claude vision — no extra model) and reason with the playbook + memory.
   increments.
 
 ### Manual E2E
-1. Send a product photo in WeChat's watched chat.
-2. Confirm the agent calls `look_at_conversation` (in `events.jsonl` `agent_turn`
+1. Set `[llm] send_images = true` in the brain config and restart (the tool is
+   withheld on the default privacy-safe config).
+2. Send a product photo in WeChat's watched chat.
+3. Confirm the agent calls `look_at_conversation` (in `events.jsonl` `agent_turn`
    tools_used) and drafts a reply that references what's in the photo.
 
 ## Feedback loop — rate, correct, and learn
@@ -236,7 +246,8 @@ the agent falls back to the single `~/.glimpse/playbook.md`.
 When a customer sends a product/售后 photo, the agent can call `match_sku` to find
 the nearest catalog SKUs (Chinese-CLIP image embeddings via onnxruntime — no torch),
 then `read_knowledge` on the candidate ids to confirm and reply. Fail-soft: if the
-model or index is absent, the agent falls back to describing the photo (pure P6).
+model or index is absent, the agent falls back to describing the photo (pure P6)
+when `[llm] send_images = true`, otherwise to text-only drafting.
 
 **One-time model setup** (the ONNX file is not committed — it's large):
 Export the Chinese-CLIP **ViT-B/16 image** encoder to ONNX (see the Chinese-CLIP

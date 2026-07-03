@@ -216,13 +216,35 @@ async def test_agent_looks_at_image_when_available() -> None:
     agent = Agent(
         client=LookThenFinalize(), system="SYS", knowledge=FakeKB(),
         redactor=Redactor([]), limiter=RateLimiter(10),
-        max_suggestions=3, max_iterations=4,
+        max_suggestions=3, max_iterations=4, send_images=True,
     )
     result = await agent.suggest(["客户: 这个还有货吗"], image="QUJD")
     assert result.drafts == ["看到了，这款是经典款黑色"]
     assert "look_at_conversation" in result.tools_used
     img_result = fed_back["last"].results[0]
     assert img_result.image_b64 == "QUJD"
+
+
+async def test_agent_withholds_look_tool_unless_opted_in() -> None:
+    # WHY: the screenshot contains unredacted pixels (faces, addresses, numbers
+    # the regex layer can't touch). It may reach the LLM only when send_images
+    # is explicitly enabled — an image being available is not consent.
+    from glimpse_brain.tooluse import AgentStep
+
+    captured = {}
+
+    class CaptureTools:
+        async def run_turn(self, *, system, transcript, tools) -> AgentStep:
+            captured["names"] = [t.name for t in tools]
+            return AgentStep(final_text='["在的"]')
+
+    agent = Agent(
+        client=CaptureTools(), system="SYS", knowledge=FakeKB(),
+        redactor=Redactor([]), limiter=RateLimiter(10),
+        max_suggestions=3, max_iterations=4,
+    )
+    await agent.suggest(["客户: 在吗"], image="QUJD")
+    assert "look_at_conversation" not in captured["names"]
 
 
 async def test_agent_omits_look_tool_without_image() -> None:
@@ -339,8 +361,8 @@ async def test_agent_omits_match_sku_without_matcher() -> None:
     agent = Agent(
         client=CaptureToolsClient(), system="SYS", knowledge=FakeKB(),
         redactor=Redactor([]), limiter=RateLimiter(10),
-        max_suggestions=3, max_iterations=4, sku=None,
+        max_suggestions=3, max_iterations=4, sku=None, send_images=True,
     )
     await agent.suggest(["客户: 在吗"], image=base64.b64encode(b"jpeg").decode())
     assert "match_sku" not in captured["tool_names"]  # no matcher → not offered
-    assert "look_at_conversation" in captured["tool_names"]  # but vision still is
+    assert "look_at_conversation" in captured["tool_names"]  # but vision (opted in) still is

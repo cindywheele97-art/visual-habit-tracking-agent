@@ -25,6 +25,9 @@ class BrainCfg(BaseModel):
 class LlmCfg(BaseModel):
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
     model: str = "claude-sonnet-4-6"
+    # Screenshots are pixels — the regex redaction layer can't touch them.
+    # Uploading them to the LLM (look_at_conversation) is opt-in only.
+    send_images: bool = False
     max_calls_per_minute: int = Field(default=6, ge=1)
     max_suggestions: int = Field(default=3, ge=1, le=5)
     max_iterations: int = Field(default=4, ge=1, le=10)

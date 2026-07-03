@@ -34,13 +34,32 @@ public final class ContactReader {
     }
 
     private func refresh() {
-        guard let rect = region() else { return }
+        guard region() != nil else { return }  // keep `current` untouched when uncalibrated
+        readFresh { _ in }
+    }
+
+    /// One immediate capture+OCR of the contact region, bypassing the poll
+    /// cache: auto-send's wrong-chat gate needs a value fresher than the timer
+    /// interval. Completion runs on the main queue. An uncalibrated or
+    /// unreadable region yields "" — callers treating a known contact as armed
+    /// fail closed on that.
+    public func readFresh(completion: @escaping (String) -> Void) {
+        guard let rect = region() else {
+            completion("")
+            return
+        }
         Task {
-            guard let image = try? await ClickSnapshot.captureRect(rect) else { return }
+            guard let image = try? await ClickSnapshot.captureRect(rect) else {
+                await MainActor.run { completion("") }
+                return
+            }
             let name = ((try? OCR.recognize(image)) ?? [])
                 .map(\.text).joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            await MainActor.run { self.current = name }
+            await MainActor.run {
+                self.current = name  // keep the poll cache fresh too
+                completion(name)
+            }
         }
     }
 }

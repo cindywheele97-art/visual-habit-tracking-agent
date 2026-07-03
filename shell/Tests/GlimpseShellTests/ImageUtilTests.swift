@@ -16,6 +16,18 @@ private func solidImage(width: Int, height: Int) -> CGImage {
 }
 
 @Test
+func downscaledJPEGBase64RespectsByteBudget() throws {
+    // WHY: OcrMsg travels as one NDJSON line; the brain rejects lines over its
+    // IPC limit. An uncapped image once crashed the connection on every real
+    // frame — over-budget frames must ship NO image (fail-soft to text-only),
+    // never an over-budget payload.
+    let big = solidImage(width: 3000, height: 2000)
+    let b64 = try #require(ImageUtil.downscaledJPEGBase64(big))
+    #expect(b64.count <= 512 * 1024)  // default budget honored
+    #expect(ImageUtil.downscaledJPEGBase64(big, maxBase64Length: 10) == nil)
+}
+
+@Test
 func downscaledJPEGBase64ProducesDecodableImageUnderCap() throws {
     let big = solidImage(width: 3000, height: 2000)
     let b64 = ImageUtil.downscaledJPEGBase64(big, maxDimension: 1024, quality: 0.6)

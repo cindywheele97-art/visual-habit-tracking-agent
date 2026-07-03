@@ -17,6 +17,20 @@ def test_defaults_when_no_file() -> None:
     assert "~" not in cfg.brain.socket_path
 
 
+def test_llm_send_images_defaults_off() -> None:
+    # WHY: conversation screenshots bypass the regex redaction layer entirely
+    # (pixels, not strings). Uploading them to the LLM must be an explicit
+    # opt-in, never a default the user has to discover.
+    cfg = load_config(None)
+    assert cfg.llm.send_images is False
+
+
+def test_llm_send_images_overridable(tmp_path: Path) -> None:
+    toml = tmp_path / "glimpse.toml"
+    toml.write_text("[llm]\nsend_images = true\n", encoding="utf-8")
+    assert load_config(toml).llm.send_images is True
+
+
 def test_loads_and_overrides(tmp_path: Path) -> None:
     toml = tmp_path / "glimpse.toml"
     toml.write_text(

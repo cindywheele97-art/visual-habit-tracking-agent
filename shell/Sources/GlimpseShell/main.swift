@@ -99,6 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sendAllowlist.isAllowed(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
             },
             inputBoxPoint: { InputBoxStore.load() },
+            readContact: { [weak self] completion in
+                guard let self else { return completion("") }
+                // Fresh capture+OCR, not the 3s poll cache: the cache can lag a
+                // chat switch by most of the countdown.
+                self.contactReader.readFresh(completion: completion)
+            },
             accessibilityTrusted: { AXIsProcessTrusted() },
             setPasteboard: { text in
                 NSPasteboard.general.clearContents()
@@ -113,6 +119,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emitReplied: { [weak self] id, mode in
                 guard let self else { return }
                 self.ipc.send(RepliedMsg(suggestionId: id, regionId: self.regionId, mode: mode))
+                if mode != "fill" {
+                    // "sent"/"cancelled" = an armed send RESOLVED — only now is
+                    // it safe to drop the Esc monitors and banner. The countdown
+                    // hitting 0 is not resolution: contact verification may
+                    // still be in flight, and Esc must be able to abort it.
+                    self.tearDownCountdown()
+                    self.overlay.hideCountdown()
+                }
             }
         )
 
@@ -220,8 +234,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             countdown.tick()
             self.overlay.showCountdown(remaining: max(countdown.remaining, 0))
             if countdown.isFinished {
-                self.tearDownCountdown()
-                self.overlay.hideCountdown()
+                // Ticking is over, but the send may still be verifying the
+                // contact. Stop the timer only — the Esc monitors and banner
+                // stay until emitReplied reports sent/cancelled.
+                self.countdownTimer?.invalidate()
+                self.countdownTimer = nil
             }
         }
     }
@@ -292,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .ack:
             break  // IPCClient already cleared its resend slot
         case .suggestions(let msg):
+            sender.noteSuggestionsUpdate(stale: msg.stale)
             overlay.update(items: msg.items, stale: msg.stale)
         case .status(let msg):
             overlay.setStatus(msg.state, detail: msg.detail)

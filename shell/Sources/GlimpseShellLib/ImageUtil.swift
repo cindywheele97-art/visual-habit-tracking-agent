@@ -13,8 +13,13 @@ public enum ImageUtil {
 
     /// Downscale so the longest side is <= maxDimension, JPEG-encode, base64.
     /// Keeps the conversation-region screenshot small enough for the socket + Claude.
+    /// Returns nil if the result exceeds maxBase64Length: OcrMsg travels as one
+    /// NDJSON line and must stay under the brain's IPC line limit — an
+    /// over-budget frame ships no image (fail-soft to text) rather than a line
+    /// the brain would reject.
     public static func downscaledJPEGBase64(
-        _ image: CGImage, maxDimension: CGFloat = 1024, quality: CGFloat = 0.6
+        _ image: CGImage, maxDimension: CGFloat = 1024, quality: CGFloat = 0.6,
+        maxBase64Length: Int = 512 * 1024
     ) -> String? {
         let w = CGFloat(image.width), h = CGFloat(image.height)
         let scale = min(1, maxDimension / max(w, h))
@@ -38,6 +43,7 @@ public enum ImageUtil {
             kCGImageDestinationLossyCompressionQuality: quality
         ] as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { return nil }
-        return (data as Data).base64EncodedString()
+        let b64 = (data as Data).base64EncodedString()
+        return b64.count <= maxBase64Length ? b64 : nil
     }
 }

@@ -56,6 +56,7 @@ class Agent:
         memory: Memory | None = None,
         recall_k: int = 5,
         sku: SkuMatcher | None = None,
+        send_images: bool = False,
     ) -> None:
         self._client = client
         self._system = system
@@ -66,6 +67,7 @@ class Agent:
         self._memory = memory
         self._recall_k = recall_k
         self._sku = sku
+        self._send_images = send_images
         self._base_tools: list[Tool] = [
             KnowledgeBaseTool(knowledge),
             ReadKnowledgeTool(knowledge),
@@ -80,9 +82,10 @@ class Agent:
         if self._memory is not None and customer:
             tools.append(RecallCustomerTool(self._memory, customer, self._recall_k, self._redactor))
             tools.append(RememberAboutCustomerTool(self._memory, customer, self._redactor))
-        # Unlike memory (optional infrastructure → `self._memory is not None`),
-        # vision needs no subsystem: the image is passed straight into LookTool.
-        if image:
+        # LookTool uploads raw screenshot pixels to the LLM — the Redactor only
+        # covers strings, so this path is gated on explicit [llm].send_images
+        # consent. MatchSkuTool embeds the image locally (ONNX) and is not.
+        if image and self._send_images:
             tools.append(LookTool(image))
         if image and self._sku is not None:
             tools.append(MatchSkuTool(self._sku, image))
