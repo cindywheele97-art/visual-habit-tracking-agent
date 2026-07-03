@@ -474,6 +474,142 @@ OCR_OUT_LINE = (
 )
 
 
+OCR_CONTACT_LINE = (
+    '{"type":"ocr","seq":%d,"ts":"2026-06-11T12:00:00Z","region_id":"region-1",'
+    '"contact":"%s",'
+    '"blocks":[{"text":"%s","x0":0.05,"x1":0.4,"conf":0.95}]}\n'
+)
+
+
+async def test_customer_switch_resets_conversation_context(tmp_path: Path) -> None:
+    # WHY: switching chats swaps the human on the other end. Without a reset,
+    # customer A's messages ride into customer B's prompt — cross-customer
+    # contamination of drafts (and of any memory written from that tail).
+    from glimpse_brain.tooluse import AgentStep
+
+    class PromptSnoop:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.prompts.append(transcript[0].text)
+            return AgentStep(final_text='["好的"]')
+
+    snoop = PromptSnoop()
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=snoop)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write((OCR_CONTACT_LINE % (1, "小明", "我要退货")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        assert "我要退货" in snoop.prompts[0]
+
+        writer.write((OCR_CONTACT_LINE % (2, "老王", "这个多少钱")).encode())
+        await writer.drain()
+        marked = await read_until(reader, "suggestions")
+        assert marked["stale"] is True  # 小明's on-screen cards get flagged
+        await read_until(reader, "suggestions")  # 老王's fresh round
+        assert "这个多少钱" in snoop.prompts[1]
+        assert "我要退货" not in snoop.prompts[1]  # 小明's context must not leak
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_returning_to_a_chat_restores_context_and_detects_repeats(tmp_path: Path) -> None:
+    # WHY: conversation state must be PER customer. Revisiting a chat has to
+    # restore its tail (drafting context) — and a message whose text another
+    # chat used before must still count as new in this one.
+    from glimpse_brain.tooluse import AgentStep
+
+    class PromptSnoop:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.prompts.append(transcript[0].text)
+            # Distinct from every customer message in this test: a draft equal
+            # to an incoming line would (correctly) trip the fill-echo filter.
+            return AgentStep(final_text='["收到，马上为您处理"]')
+
+    snoop = PromptSnoop()
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=snoop)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write((OCR_CONTACT_LINE % (1, "小明", "在吗")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+
+        writer.write((OCR_CONTACT_LINE % (2, "老王", "好的")).encode())
+        await writer.drain()
+        assert (await read_until(reader, "suggestions"))["stale"] is True
+        await read_until(reader, "suggestions")  # 老王's fresh round
+
+        # Back to 小明, who has JUST sent 好的 — a text 老王 used before.
+        line = (
+            '{"type":"ocr","seq":3,"ts":"t","region_id":"region-1","contact":"小明",'
+            '"blocks":[{"text":"在吗","x0":0.05,"x1":0.4,"conf":0.95},'
+            '{"text":"好的","x0":0.05,"x1":0.4,"conf":0.95}]}\n'
+        )
+        writer.write(line.encode())
+        await writer.drain()
+        assert (await read_until(reader, "suggestions"))["stale"] is True
+        await read_until(reader, "suggestions")
+        prompt = snoop.prompts[2]
+        assert "好的" in prompt  # the repeat was detected as new
+        assert "在吗" in prompt  # 小明's earlier context was restored
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_transient_blank_contact_does_not_leak_context(tmp_path: Path) -> None:
+    # WHY: a single failed contact read between two chats (A → "" → B) must
+    # not stitch their conversations together — the switch must still be
+    # recognized when the next known name differs.
+    from glimpse_brain.tooluse import AgentStep
+
+    class PromptSnoop:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def run_turn(self, *, system: str, transcript: list, tools: list) -> AgentStep:
+            self.prompts.append(transcript[0].text)
+            return AgentStep(final_text='["好的"]')
+
+    snoop = PromptSnoop()
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=snoop)
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write((OCR_CONTACT_LINE % (1, "小明", "我要退货")).encode())
+        await writer.drain()
+        await read_until(reader, "suggestions")
+
+        # Same frame content, contact read failed for one frame.
+        writer.write((OCR_LINE % (2, "我要退货")).encode())
+        await writer.drain()
+        assert (await read_until(reader, "ack"))["seq"] == 2
+
+        writer.write((OCR_CONTACT_LINE % (3, "老王", "这个多少钱")).encode())
+        await writer.drain()
+        assert (await read_until(reader, "suggestions"))["stale"] is True
+        await read_until(reader, "suggestions")
+        assert "这个多少钱" in snoop.prompts[1]
+        assert "我要退货" not in snoop.prompts[1]  # 小明's context must not leak
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_fill_echo_of_shown_suggestion_does_not_mark_stale(tmp_path: Path) -> None:
     # WHY: when the watch region covers the input box, the shell's own fill is
     # OCR'd back as a "new outbound line" 1-2s into the 5s countdown. Treating
@@ -541,10 +677,12 @@ async def test_new_connection_does_not_resurrect_old_cards(tmp_path: Path) -> No
 
 
 async def test_drafts_computed_before_new_activity_arrive_stale(tmp_path: Path) -> None:
-    # WHY: new INBOUND during a suggestion pass cancels it (SettleGate.poke),
-    # but new OUTBOUND — the human already answered manually — does not. Drafts
-    # computed from a tail read before that reply are born outdated; delivering
-    # them stale=false would invite auto-sending a duplicate/contradictory reply.
+    # WHY: a poke never cancels an in-flight pass (that would starve
+    # suggestions under a steady stream) — so drafts computed from a tail read
+    # before mid-pass activity WILL be delivered. They are born outdated;
+    # delivering them stale=false would invite auto-sending a duplicate or
+    # contradictory reply. (Inbound additionally schedules a follow-up pass;
+    # outbound — the human answered manually — schedules nothing.)
     from glimpse_brain.tooluse import AgentStep
 
     gate = asyncio.Event()

@@ -31,6 +31,24 @@ def test_llm_send_images_overridable(tmp_path: Path) -> None:
     assert load_config(toml).llm.send_images is True
 
 
+def test_legacy_broken_redaction_pattern_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # WHY: fixed defaults never reach installs whose config was seeded before
+    # the fix. \b\d{10,}\b silently matches nothing in Chinese text — keeping
+    # it must be loud, not a silent PII leak.
+    import logging
+
+    toml = tmp_path / "glimpse.toml"
+    toml.write_text(
+        r'[redaction]' + "\n" + r'patterns = ["\\b\\d{10,}\\b"]' + "\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        load_config(toml)
+    assert "legacy redaction pattern" in caplog.text
+
+
 def test_loads_and_overrides(tmp_path: Path) -> None:
     toml = tmp_path / "glimpse.toml"
     toml.write_text(

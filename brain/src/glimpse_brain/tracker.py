@@ -49,6 +49,10 @@ class ConversationTracker:
         self._seen: dict[str, None] = {}  # insertion-ordered set
         self._last_texts: list[str] = []
         self._conversation: list[_Line] = []
+        # Whether the previous frame showed the LIVE bottom of the chat. Only
+        # such frames may anchor the positional append-diff: a scrolled view
+        # aligning with the next frame is coincidence, not an append.
+        self._anchored = True
 
     def ingest(self, blocks: list[Block]) -> IngestResult:
         if not blocks:
@@ -66,17 +70,32 @@ class ConversationTracker:
         texts = [line.text for line in lines]
         if texts == self._last_texts:
             return IngestResult(accepted=True, reason="unchanged")
+        prev_texts = self._last_texts
         self._last_texts = texts
 
-        # New-tail scan: walk up from the bottom until we hit a line we've seen.
-        # Appended messages are unseen tail lines; scroll-back puts a seen line
-        # at the bottom, yielding an empty tail.
-        new_tail: list[_Line] = []
-        for line in reversed(lines):
-            if line.text in self._seen:
-                break
-            new_tail.append(line)
-        new_tail.reverse()
+        # Positional append-diff first: if this frame extends the previous one
+        # (possibly with top lines scrolled off), everything past the overlap
+        # is new — even when its TEXT was seen before. Text-only dedup would
+        # permanently eat repeats ("好的", "在吗"), silencing suggestions for
+        # exactly the most common customer messages. Only an anchored prev
+        # frame qualifies: after a scroll, alignment is coincidence.
+        appended = self._append_diff(prev_texts, lines) if self._anchored else None
+        if appended is not None:
+            new_tail = appended
+        else:
+            # Not a clean append (first frame, scrolled view, rewrap): fall
+            # back to the seen-scan — walk up from the bottom until a line
+            # we've seen. It fails safe toward "nothing new"; the cost is that
+            # a repeated-text NEW message in an un-anchored frame is missed.
+            new_tail = []
+            for line in reversed(lines):
+                if line.text in self._seen:
+                    break
+                new_tail.append(line)
+            new_tail.reverse()
+            # New messages only ever appear at the live bottom: seeing one
+            # proves this frame is back at the bottom and may anchor again.
+            self._anchored = bool(new_tail)
 
         for line in new_tail:
             self._remember(line.text)
@@ -92,6 +111,19 @@ class ConversationTracker:
 
     def tail(self, n: int = 12) -> list[str]:
         return [f"{_LABELS[line.side]}: {line.text}" for line in self._conversation[-n:]]
+
+    def _append_diff(self, prev: list[str], lines: list[_Line]) -> list[_Line] | None:
+        """The appended lines if this frame is the previous frame plus new
+        lines at the bottom (allowing top lines to have scrolled off), else
+        None. An empty prev has no anchor to align against."""
+        if not prev:
+            return None
+        texts = [line.text for line in lines]
+        for offset in range(len(prev)):
+            overlap = prev[offset:]
+            if texts[: len(overlap)] == overlap:
+                return lines[len(overlap) :]
+        return None
 
     def _filter_blocks(self, blocks: list[Block]) -> list[tuple[Block, str]]:
         """Normalize text and drop empty/ignored blocks BEFORE the confidence

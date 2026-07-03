@@ -10,6 +10,21 @@ def test_redacts_cn_mobile_and_long_digit_runs() -> None:
     assert "20260611000123" not in r.redact("订单20260611000123")
 
 
+def test_default_patterns_redact_digits_embedded_in_chinese_text() -> None:
+    # WHY: CJK characters count as \w in Python's re, so a \b-anchored pattern
+    # never fires between 号 and a digit — exactly the context Chinese chat
+    # text puts card/order numbers in. The DEFAULT config patterns must catch
+    # them, or the product's main audience leaks PII to the LLM.
+    from glimpse_brain.config import RedactionCfg
+
+    r = Redactor(RedactionCfg().patterns)
+    masked = r.redact("卡号6212345678901234请查收")
+    assert "6212345678901234" not in masked
+    assert "卡号" in masked and "请查收" in masked
+    # Short numbers (prices, quantities) stay readable.
+    assert r.redact("一共99元，买了3件") == "一共99元，买了3件"
+
+
 def test_clean_text_untouched() -> None:
     r = Redactor([r"1[3-9]\d{9}"])
     assert r.redact("你好，多少钱？") == "你好，多少钱？"

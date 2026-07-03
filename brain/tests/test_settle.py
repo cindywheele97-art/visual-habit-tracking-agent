@@ -27,6 +27,31 @@ async def test_fires_once_after_quiet_period() -> None:
     assert count == 1
 
 
+async def test_poke_does_not_cancel_in_flight_action() -> None:
+    # WHY: a poke mid-LLM-call must not abort the pass — under a steady stream
+    # of messages that starves suggestions forever. The running pass finishes;
+    # the poke schedules ONE follow-up pass afterwards (which sees the newest
+    # messages).
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    completed = 0
+
+    async def action() -> None:
+        nonlocal completed
+        started.set()
+        await finish.wait()
+        completed += 1
+
+    gate = SettleGate(delay=0.01, action=action)
+    gate.poke()
+    await started.wait()
+    gate.poke()  # lands while the action is running
+    gate.poke()  # burst mid-flight still debounces to one follow-up
+    finish.set()
+    await asyncio.sleep(0.1)
+    assert completed == 2  # the in-flight pass finished AND one follow-up ran
+
+
 async def test_cancel_prevents_fire() -> None:
     fired = False
 

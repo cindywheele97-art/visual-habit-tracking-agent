@@ -8,7 +8,17 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
   exit 1
 fi
 
-(cd brain && source .venv/bin/activate && exec python -m glimpse_brain --config ../config/glimpse.toml) &
+# Single config source of truth: ~/.glimpse/glimpse.toml — the file the README
+# documents and the evals runner loads. Seed it from the repo default on first
+# run; never overwrite user edits.
+CONFIG="$HOME/.glimpse/glimpse.toml"
+if [[ ! -f "$CONFIG" ]]; then
+  mkdir -p "$HOME/.glimpse"
+  cp config/glimpse.toml "$CONFIG"
+  echo "seeded $CONFIG from config/glimpse.toml"
+fi
+
+(cd brain && source .venv/bin/activate && exec python -m glimpse_brain --config "$CONFIG") &
 BRAIN_PID=$!
 trap 'kill "$BRAIN_PID" 2>/dev/null || true' EXIT INT TERM
 

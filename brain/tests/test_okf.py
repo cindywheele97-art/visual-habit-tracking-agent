@@ -46,6 +46,46 @@ def test_parse_derives_defaults_for_missing_keys(tmp_path: Path) -> None:
     assert doc.body == "亲，您好～\n第二行"
 
 
+def test_doc_starting_with_horizontal_rule_keeps_all_content(tmp_path: Path) -> None:
+    # WHY: '---' at the top of a plain doc is a markdown horizontal rule, not a
+    # frontmatter fence. Substring splitting silently drops everything between
+    # the first two rules and the agent quotes a gutted document as policy.
+    doc = parse_doc(write(tmp_path / "rule.md", "---\n运费规则\n---\n满99包邮"))
+    assert "运费规则" in doc.body
+    assert "满99包邮" in doc.body
+
+
+def test_frontmatter_value_containing_triple_dash(tmp_path: Path) -> None:
+    # WHY: '---' inside a frontmatter VALUE must not terminate the block early.
+    doc = parse_doc(
+        write(tmp_path / "a.md", "---\nid: a\ntitle: A---B\n---\n正文")
+    )
+    assert doc.title == "A---B"
+    assert doc.body == "正文"
+
+
+def test_empty_frontmatter_block_is_stripped(tmp_path: Path) -> None:
+    # WHY: an empty fence pair is real (empty) frontmatter — the fences must
+    # not leak into the body or become the doc's description.
+    doc = parse_doc(write(tmp_path / "e.md", "---\n---\n退货政策：满99包邮"))
+    assert doc.body == "退货政策：满99包邮"
+    assert doc.description == "退货政策：满99包邮"
+
+
+def test_comment_only_frontmatter_is_stripped(tmp_path: Path) -> None:
+    doc = parse_doc(write(tmp_path / "c.md", "---\n# todo: fill in\n---\n正文"))
+    assert doc.body == "正文"
+
+
+def test_body_horizontal_rule_survives(tmp_path: Path) -> None:
+    # WHY: a horizontal rule inside the body is legal markdown; the body must
+    # arrive at the agent intact.
+    doc = parse_doc(
+        write(tmp_path / "b.md", "---\nid: b\n---\n上半\n\n---\n\n下半")
+    )
+    assert "上半" in doc.body and "下半" in doc.body
+
+
 def test_load_catalog_skips_malformed_yaml(tmp_path: Path) -> None:
     write(tmp_path / "good.md", FULL)
     write(tmp_path / "bad.md", "---\ntitle: \"unterminated\ntype: [oops\n---\nbody\n")

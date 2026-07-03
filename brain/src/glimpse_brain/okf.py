@@ -4,12 +4,18 @@ records. Adopts the OKF format only — no OKF tooling/stack."""
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 log = logging.getLogger("glimpse.okf")
+
+# A frontmatter fence is a '---' LINE, not a '---' substring: the doc must
+# start with one, and the block ends at the next line consisting of '---'.
+# Substring splitting truncated docs at horizontal rules / dashed values.
+_FENCE = re.compile(r"\A---[ \t]*\r?\n(.*?)^---[ \t]*\r?$\n?", re.DOTALL | re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -23,15 +29,20 @@ class OkfDoc:
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
-    """Return (frontmatter dict, body). A leading '---' fence delimits the YAML
-    block; no fence → empty frontmatter and the whole text is the body."""
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) == 3:
-            meta = yaml.safe_load(parts[1]) or {}
-            if not isinstance(meta, dict):
-                meta = {}
-            return meta, parts[2].lstrip("\n")
+    """Return (frontmatter dict, body). A leading '---' fence line delimits the
+    YAML block; no fence — or fenced content that isn't a YAML mapping (e.g. a
+    doc that opens with a horizontal rule) — means empty frontmatter and the
+    WHOLE text as the body."""
+    match = _FENCE.match(text)
+    if match:
+        meta = yaml.safe_load(match.group(1))
+        if meta is None:
+            # A blank or comment-only block is real (empty) frontmatter — the
+            # fences must not leak into the body.
+            return {}, text[match.end() :].lstrip("\n")
+        if isinstance(meta, dict):
+            return meta, text[match.end() :].lstrip("\n")
+        # Scalar/list "frontmatter" is prose between horizontal rules → body.
     return {}, text
 
 

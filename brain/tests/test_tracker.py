@@ -43,6 +43,57 @@ def test_append_only_new_tail_is_reported() -> None:
     assert result.new_inbound == ["第二条", "第三条"]
 
 
+def test_repeated_text_new_message_still_detected() -> None:
+    # WHY: customers repeat themselves constantly ("好的", "在吗"). Global text
+    # dedup must not eat a genuinely NEW message just because the same words
+    # were said before — that permanently silences suggestions for exactly the
+    # most common customer messages.
+    t = make_tracker()
+    t.ingest([_b("在吗")])
+    t.ingest([_b("在吗"), _own("在的，亲")])
+    result = t.ingest([_b("在吗"), _own("在的，亲"), _b("在吗")])
+    assert result.new_inbound == ["在吗"]
+    # Re-OCR of the now-static screen must not re-fire.
+    again = t.ingest([_b("在吗"), _own("在的，亲"), _b("在吗")])
+    assert again.new_inbound == []
+
+
+def test_append_with_top_lines_scrolled_off() -> None:
+    # WHY: as the chat grows, old lines scroll out of the watched region; the
+    # frame is still an append and the new bottom line must be detected.
+    t = make_tracker()
+    t.ingest([_b("一"), _b("二"), _b("三")])
+    result = t.ingest([_b("二"), _b("三"), _b("四")])
+    assert result.new_inbound == ["四"]
+
+
+def test_scroll_up_then_back_down_does_not_refire() -> None:
+    # WHY: scrolling back to the bottom re-shows lines that positionally look
+    # like an append against the scrolled-up frame. A scrolled view must not
+    # anchor the append-diff — otherwise handled messages re-fire as new and
+    # produce auto-send-eligible drafts for them.
+    t = make_tracker()
+    t.ingest([_b("旧A"), _b("旧B"), _b("旧C")])
+    assert t.ingest([_b("更旧"), _b("历史"), _b("旧A")]).new_inbound == []  # scrolled up
+    back = t.ingest([_b("旧A"), _b("旧B"), _b("旧C")])  # scrolled back down
+    assert back.new_inbound == []
+    assert t.tail() == ["客户: 旧A", "客户: 旧B", "客户: 旧C"]  # no duplicates
+
+
+def test_new_message_after_scroll_back_re_anchors() -> None:
+    # WHY: new messages only ever appear at the live bottom — seeing one
+    # proves we are back at the bottom, and append-diff must resume so later
+    # repeated-text messages are still caught.
+    t = make_tracker()
+    t.ingest([_b("旧A"), _b("旧B")])
+    t.ingest([_b("历史"), _b("旧A")])  # scrolled up
+    t.ingest([_b("旧A"), _b("旧B")])  # back down, nothing new
+    fresh = t.ingest([_b("旧B"), _b("新消息")])
+    assert fresh.new_inbound == ["新消息"]
+    repeat = t.ingest([_b("旧B"), _b("新消息"), _b("旧A")])  # 旧A repeated as NEW text
+    assert repeat.new_inbound == ["旧A"]
+
+
 def test_scroll_back_does_not_trigger() -> None:
     # WHY: scrolling up surfaces OLD lines at the top; the bottom line is one
     # we've already seen, so the new-tail scan must come up empty.

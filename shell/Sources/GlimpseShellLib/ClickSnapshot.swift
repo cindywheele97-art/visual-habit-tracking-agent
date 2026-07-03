@@ -15,21 +15,35 @@ public enum ClickSnapshot {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    /// One-shot screenshot of a `size`-sized region centered on a global-coordinate
-    /// `point` (CG origin: top-left). Returns nil if no display contains the point.
-    public static func captureAround(point: CGPoint, size: CGSize) async throws -> CGImage? {
+    /// One-shot screenshot of a `size`-sized region centered on a global
+    /// `point`, scoped to a SINGLE window's content. A raw display-rect
+    /// capture would include every window overlapping the rect — e.g. a
+    /// password manager floating over the allowlisted chat — so the capture is
+    /// filtered to the clicked window only. Returns nil (fail-closed: capture
+    /// nothing) if the window can't be found on screen.
+    public static func captureWindow(
+        _ windowId: UInt32, around point: CGPoint, size: CGSize
+    ) async throws -> CGImage? {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )
-        guard
-            let scDisplay = content.displays.first(where: {
-                CGDisplayBounds($0.displayID).contains(point)
-            })
+        guard let window = content.windows.first(where: { $0.windowID == windowId })
         else { return nil }
 
-        let bounds = CGDisplayBounds(scDisplay.displayID)
-        let globalRect = rect(around: point, in: bounds, size: size)
-        return try await captureGlobalRect(globalRect, on: scDisplay, displayBounds: bounds)
+        let frame = window.frame  // global, top-left origin (matches CG/SCK)
+        let globalRect = rect(around: point, in: frame, size: size)
+        let local = CGRect(
+            x: globalRect.minX - frame.minX, y: globalRect.minY - frame.minY,
+            width: globalRect.width, height: globalRect.height
+        )
+        let config = SCStreamConfiguration()
+        config.sourceRect = local
+        config.width = Int(local.width) * 2  // retina-density pixels for OCR quality
+        config.height = Int(local.height) * 2
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: filter, configuration: config
+        )
     }
 
     /// One-shot screenshot of an arbitrary global-coordinate rect.

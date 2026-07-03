@@ -95,11 +95,12 @@ class GlimpseServer:
         self._cfg = cfg
         self._redactor = Redactor(cfg.redaction.patterns)
         self._events = EventLog(Path(cfg.brain.event_log), self._redactor)
-        self._tracker = ConversationTracker(
-            min_confidence=cfg.tracker.min_ocr_confidence,
-            side_threshold=cfg.tracker.side_threshold,
-            ignore_patterns=cfg.tracker.ignore_patterns,
-        )
+        # Conversation state is PER customer: the active tracker follows the
+        # contact on screen; parked trackers keep their positional anchor,
+        # tail, and text dedup so revisits restore context without re-firing.
+        self._tracker = self._new_tracker()
+        self._trackers: dict[str, ConversationTracker] = {}
+        self._active_contact: str | None = None
         shared_limiter = RateLimiter(cfg.llm.max_calls_per_minute)
         self._memory: Memory | None = (
             self._build_memory(cfg) if isinstance(memory, _Unset) else memory
@@ -152,6 +153,13 @@ class GlimpseServer:
         self._region_id = ""
         self._summarizing = False
         self._seed_satisfaction()
+
+    def _new_tracker(self) -> ConversationTracker:
+        return ConversationTracker(
+            min_confidence=self._cfg.tracker.min_ocr_confidence,
+            side_threshold=self._cfg.tracker.side_threshold,
+            ignore_patterns=self._cfg.tracker.ignore_patterns,
+        )
 
     @staticmethod
     def _build_memory(cfg: Config) -> Memory | None:
@@ -283,7 +291,19 @@ class GlimpseServer:
     async def _on_ocr(self, msg: OcrMsg) -> None:
         await self._send(AckMsg(seq=msg.seq))
         self._region_id = msg.region_id
-        self._current_customer = (msg.contact or "").strip() or None
+        contact = (msg.contact or "").strip() or None
+        # Chat switch (compared against the ACTIVE tracker's owner, not the
+        # per-frame contact — a transient failed read must neither stitch two
+        # chats together nor lose the current one): park the old conversation
+        # and activate/create the new customer's.
+        if contact and contact != self._active_contact:
+            if self._active_contact is not None:
+                self._trackers[self._active_contact] = self._tracker
+                self._tracker = self._trackers.get(contact) or self._new_tracker()
+            # else: the unlabeled view WAS this chat — it just gained a name
+            # (calibration lag / first successful read). Keep the live tracker.
+            self._active_contact = contact
+        self._current_customer = contact
         # Mirror the frame exactly — including image="" (no image, or the shell
         # dropped an over-budget one). Retaining the previous screenshot would
         # let the agent reason over a stale, possibly different conversation.
@@ -388,9 +408,10 @@ class GlimpseServer:
             for i, text in enumerate(result.drafts, 1)
         ]
         # Activity that landed while the agent was drafting makes these drafts
-        # born-outdated (new INBOUND cancels the pass via SettleGate.poke, but
-        # OUTBOUND — the human already replied manually — does not). Deliver
-        # them stale so auto-send refuses them; stale_sent stops a re-mark.
+        # born-outdated (a poke no longer cancels an in-flight pass — inbound
+        # schedules a follow-up pass instead, and outbound schedules nothing).
+        # Deliver them stale so auto-send refuses them; stale_sent stops a
+        # re-mark.
         stale = self._tracker.tail() != tail
         snapshot: dict[str, object] = {
             "tail": tail,

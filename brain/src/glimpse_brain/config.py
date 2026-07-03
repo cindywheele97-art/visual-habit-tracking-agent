@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+log = logging.getLogger("glimpse.config")
+
+# The pre-fix default digit pattern: \b never matches between CJK characters
+# and digits, so it silently redacts nothing in Chinese text. Configs seeded
+# before the fix still carry it — keeping it must be loud.
+_LEGACY_DIGIT_PATTERN = r"\b\d{10,}\b"
 
 
 class BrainCfg(BaseModel):
@@ -46,8 +54,11 @@ class TrackerCfg(BaseModel):
 
 class RedactionCfg(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Lookarounds, not \b: CJK characters are \w in Python's re, so \b never
+    # fires between 号 and a digit — the exact context Chinese chat text puts
+    # card/order numbers in.
     patterns: list[str] = Field(
-        default_factory=lambda: [r"1[3-9]\d{9}", r"\b\d{10,}\b"]
+        default_factory=lambda: [r"1[3-9]\d{9}", r"(?<!\d)\d{10,}(?!\d)"]
     )
 
 
@@ -107,4 +118,14 @@ def load_config(path: Path | None) -> Config:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"malformed TOML in {path}: {exc}") from exc
-    return Config.model_validate(data)
+    cfg = Config.model_validate(data)
+    if _LEGACY_DIGIT_PATTERN in cfg.redaction.patterns:
+        log.warning(
+            "%s uses the legacy redaction pattern %r, which matches NOTHING in "
+            "Chinese text (card/order numbers leak to the LLM). Replace it with "
+            "%r.",
+            path,
+            _LEGACY_DIGIT_PATTERN,
+            r"(?<!\d)\d{10,}(?!\d)",
+        )
+    return cfg
