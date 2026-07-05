@@ -102,6 +102,8 @@
 
 **验收标准：** 基线四命令全绿（brain ≥ 196，shell ≥ 65）；把 `drainOnConnect` 改成返回空数组后 spool 测试必须变红（自查后改回）；`git grep -n "asyncio.create_task" brain/src/glimpse_brain/server.py` 只应出现在 summarize 分支（SettleGate 内部的 create_task 在 settle.py，不在此文件）。
 
+> **✅ Phase 2 已验收并 merge（commit `00f6b2d` / merge `d0ad431`，2026-07-05）。** Gate 记录：brain 198 / shell 65 / ruff clean / mypy 10（未新增）；Planner 独立变异确认两侧 pin 有牙齿（create_task→await 令 brain 非阻塞测试 TimeoutError；drainOnConnect→[] 令 3/4 spool 测试红）；OutboundSpool 四条路径经 Planner 逐一走查无 bug。**Planner 补一行 fail-loud**：Cursor 实现里 `droppedCount` 有计数却无日志——离线队列丢最旧可能丢掉 RepliedMsg 审计记录，属新增静默失败，违反本批"消灭静默吞错"铁律；已在 IPCClient enqueue 处补 NSLog（不碰接口/测试）。**给 Cursor 的固化要求**：凡"丢弃/截断/降级"路径,一律 fail-loud（日志或状态可见）,勿再需 Planner 提醒。
+
 ---
 
 ## Phase 3 — 静默失败消除（brain）
