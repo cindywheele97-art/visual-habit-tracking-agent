@@ -36,3 +36,31 @@ def test_recall_error_result_logs_and_returns_empty(
             hits = mem._recall_sync("客户", "query", k=5)
     assert hits == []
     assert "mempalace recall failed" in caplog.text
+
+
+def test_wing_key_distinguishes_similar_display_names() -> None:
+    # WHY: _safe_wing collapsed "王先生" and " 王先生." to the same key — cross-customer pollution.
+    from glimpse_brain.mempalace_memory import _wing
+
+    assert _wing("王先生") != _wing(" 王先生.")
+
+
+def test_wing_key_is_stable() -> None:
+    from glimpse_brain.mempalace_memory import _wing
+
+    assert _wing("王先生") == _wing("王先生")
+
+
+def test_write_metadata_carries_display_name(tmp_path) -> None:
+    # WHY: hashed wing keys are opaque — the original OCR display name must land in metadata for ops.
+    from unittest.mock import MagicMock, patch
+
+    from glimpse_brain.mempalace_memory import MemPalaceMemory, _wing
+
+    mem = MemPalaceMemory(palace_path=tmp_path / "palace", embedding_model="minilm")
+    mock_collection = MagicMock()
+    with patch("mempalace.palace.get_collection", return_value=mock_collection):
+        mem._write_sync(" 王先生.", "曾因破损退货", "interaction")
+    metadata = mock_collection.upsert.call_args.kwargs["metadatas"][0]
+    assert metadata["customer_display"] == " 王先生."
+    assert metadata["wing"] == _wing(" 王先生.")

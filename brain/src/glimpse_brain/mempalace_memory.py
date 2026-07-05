@@ -16,9 +16,9 @@ minimum metadata the searcher needs: wing + room (for scoped filtering).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -31,13 +31,9 @@ log = logging.getLogger("glimpse.memory")
 _SYNTHETIC_SOURCE = "mempalace_memory://glimpse_brain"
 
 
-def _safe_wing(customer: str) -> str:
-    """Sanitise a customer name into a mempalace wing identifier.
-
-    Wing names must not contain path separators; other special chars are
-    collapsed so IDs remain filesystem-safe.
-    """
-    return re.sub(r"[\\/]+", "_", customer).strip(" ._-") or "unknown"
+def _wing(customer: str) -> str:
+    """Stable per-customer wing key — raw display name hashed, not collapsed."""
+    return "c-" + hashlib.sha256(customer.encode("utf-8")).hexdigest()[:16]
 
 
 class MemPalaceMemory:
@@ -83,7 +79,7 @@ class MemPalaceMemory:
         result = searcher.search_memories(
             query,
             palace_path=self._palace,
-            wing=_safe_wing(customer),
+            wing=_wing(customer),
             n_results=k,
         )
         if not isinstance(result, dict) or "error" in result:
@@ -120,7 +116,7 @@ class MemPalaceMemory:
         from mempalace.ids import ID_RECIPE, make_drawer_id_from_content
         from mempalace.palace import NORMALIZE_VERSION, get_collection
 
-        wing = _safe_wing(customer)
+        wing = _wing(customer)
 
         collection = get_collection(self._palace, create=True)
 
@@ -129,6 +125,7 @@ class MemPalaceMemory:
         metadata: dict[str, str | int | float] = {
             "wing": wing,
             "room": kind,
+            "customer_display": customer,
             "source_file": _SYNTHETIC_SOURCE,
             "chunk_index": 0,
             "added_by": "glimpse_brain",

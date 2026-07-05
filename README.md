@@ -158,6 +158,9 @@ draw a box over WeChat's contact-name header); the detected name shows as
   `remember_about_customer` while drafting.
 - Memory is local-first (`~/.glimpse/palace`, MemPalace) and fail-soft — if it's
   unavailable, drafting falls back to knowledge-base-only.
+- **Breaking (2026-07):** customer wing keys are now `c-` + SHA-256 of the raw OCR
+  display name; memories written under the old collapsed-wing scheme are not
+  retrieved automatically (no migration — wipe or re-capture if you had test data).
 - Config (`memory` table in `~/.glimpse/glimpse.toml`): `enabled`, `palace_path`,
   `embedding_model` (default `embeddinggemma`), `recall_k`.
 
