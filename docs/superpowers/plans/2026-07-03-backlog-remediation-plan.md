@@ -134,6 +134,8 @@
 
 **验收标准：** 基线四命令全绿（brain ≥ 201）；`git grep -n "except Exception" brain/src/glimpse_brain/sku/tool.py` 的分支体内必须含 `log.exception`；删除任一新 validator/warning 后对应测试变红（自查）。
 
+> **✅ Phase 3 已验收并 merge（commit `fd24e8c` / merge `32c8f05`，2026-07-05）。** Gate 记录：brain 204 / ruff clean / mypy 10（未新增）/ `import evals.__main__` OK / mempalace 新测试用 mock 不拉真模型。**Planner 修正一处过度脱敏**：Cursor 的分隔数字 pattern 用混用 `[ -]?`，把"横线日期+空格+时间"（`2026-07-05 12:30`）粘成 10 位数字串误遮——发货/下单时间是电商 CS 核心上下文。改为同质分隔符（空格家族/横线家族），加 datetime 负例钉死；卡号/电话（从不混用分隔符）仍正常遮。**给 Cursor 的固化要求（升级 Phase 2 那条）**：脱敏这类"双向正确性"改动，负例必须覆盖**结构化数字仿冒物**（日期/时间/订单号/快递单号），不能只测短数字——本阶段的负例太浅正是这个漏洞的来源。
+
 ---
 
 ## Phase 4 — 记忆键正确性（brain）
