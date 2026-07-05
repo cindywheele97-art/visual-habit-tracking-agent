@@ -187,6 +187,9 @@
 
 **验收标准：** 基线四命令全绿（brain ≥ 205，shell ≥ 63）；`swift build` 无新警告（`swift build 2>&1 | grep -c warning` 不高于 main 分支同命令值）；手工冒烟（可选但推荐）：`scripts/dev.sh` 起进程，选区→Esc 取消→原标定仍在。
 
+> **✅ Phase 5 已验收并 merge（commit `ded1315` / merge `431d663`，2026-07-05）。** Gate 记录：brain 208 / shell 67 / build 0 warnings / mypy 10（未新增）；CaptureEngine 用 actor + NSObject bridge **一次编过**（未用 startTask 备选）；ContactReader 的 `OSAllocatedUnfairLock` 两处 `withLock` 均不跨 await（await 在 withLock 外层）——真修复且无死锁；RegionSelector 两个调用点 nil 分支均不写 Store；DiffGate + brain watching 双侧变异有牙齿。
+> **Planner 自我修正（我的 plan 措辞不准，非 Cursor 缺陷）**：计划写"actor 天然串行化"不精确——Swift **actor 可重入**，`start` 内的 `await`（SCShareableContent/startCapture）处两个并发 start 可交错、理论上孤立一个 stream。但 `capture.start` 的触发全是 UI 门控（launch 一次性 + 用户拖拽选区），人类无法在 startCapture 的几十毫秒窗口内触发两次，**该竞态实际不可达**，故不阻断、记为潜在限制。若 Phase 7+ 引入程序化/快速重采,需补 startTask 链式串行（备选方案）。
+
 ---
 
 ## Phase 6 — 测试补强、类型清零、依赖与文档（brain + repo）
