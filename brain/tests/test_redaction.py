@@ -25,6 +25,35 @@ def test_default_patterns_redact_digits_embedded_in_chinese_text() -> None:
     assert r.redact("一共99元，买了3件") == "一共99元，买了3件"
 
 
+def test_default_patterns_redact_email_and_separated_numbers() -> None:
+    # WHY: email and spaced/dashed card numbers leak PII if defaults only catch contiguous digits.
+    from glimpse_brain.config import RedactionCfg
+
+    r = Redactor(RedactionCfg().patterns)
+    assert "a.b@test.com" not in r.redact("联系 a.b@test.com 谢谢")
+    assert "6212 3456 7890 1234" not in r.redact("卡号6212 3456 7890 1234")
+    assert "621-234-567-890-1" not in r.redact("卡621-234-567-890-1")
+    # Over-redaction is as bad as under-redaction — prices and short hotlines stay readable.
+    assert r.redact("一共99元，买了3件") == "一共99元，买了3件"
+    assert r.redact("电话 400-123") == "电话 400-123"
+    # Datetimes (dash date + space + time) must NOT be mistaken for a card/phone
+    # run: the separated pattern keeps its separator homogeneous. 发货/下单时间
+    # is core e-commerce CS context the draft needs.
+    assert r.redact("发货时间 2026-07-05 12:30:45 已寄出") == "发货时间 2026-07-05 12:30:45 已寄出"
+    assert r.redact("订单 2026-07-05 下单") == "订单 2026-07-05 下单"
+
+
+def test_separated_pattern_still_catches_spaced_and_dashed_cards() -> None:
+    # WHY: the homogeneous-separator refinement must not regress the real target
+    # — spaced/dashed cards and spaced mobiles still get redacted.
+    from glimpse_brain.config import RedactionCfg
+
+    r = Redactor(RedactionCfg().patterns)
+    assert "138 1234 5678" not in r.redact("手机 138 1234 5678")  # spaced mobile
+    assert "6212 3456 7890 1234" not in r.redact("卡号6212 3456 7890 1234")
+    assert "6212-3456-7890-1234" not in r.redact("卡6212-3456-7890-1234")
+
+
 def test_clean_text_untouched() -> None:
     r = Redactor([r"1[3-9]\d{9}"])
     assert r.redact("你好，多少钱？") == "你好，多少钱？"

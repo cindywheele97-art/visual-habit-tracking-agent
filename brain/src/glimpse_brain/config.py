@@ -6,7 +6,7 @@ import logging
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 log = logging.getLogger("glimpse.config")
 
@@ -58,8 +58,18 @@ class RedactionCfg(BaseModel):
     # Lookarounds, not \b: CJK characters are \w in Python's re, so \b never
     # fires between 号 and a digit — the exact context Chinese chat text puts
     # card/order numbers in.
+    # Separated-number patterns keep the separator HOMOGENEOUS (space-family
+    # vs dash-family) rather than a mixed [ -]?: a mixed class merged a dashed
+    # date and a spaced time ("2026-07-05 12:30") into a 10-digit run and
+    # redacted it. Cards/phones never mix separators; dates/times do.
     patterns: list[str] = Field(
-        default_factory=lambda: [r"1[3-9]\d{9}", r"(?<!\d)\d{10,}(?!\d)"]
+        default_factory=lambda: [
+            r"1[3-9]\d{9}",
+            r"(?<!\d)\d{10,}(?!\d)",
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            r"(?<![\d-])\d(?:[ ]?\d){9,}(?![\d-])",
+            r"(?<![\d-])\d(?:-?\d){9,}(?![\d-])",
+        ]
     )
 
 
@@ -81,6 +91,15 @@ class FeedbackCfg(BaseModel):
     satisfaction_window: int = Field(default=20, ge=1)
     advisory_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
     advisory_min_ratings: int = Field(default=20, ge=1)
+
+    @model_validator(mode="after")
+    def _window_covers_min_ratings(self) -> FeedbackCfg:
+        if self.satisfaction_window < self.advisory_min_ratings:
+            raise ValueError(
+                f"satisfaction_window ({self.satisfaction_window}) must be >= "
+                f"advisory_min_ratings ({self.advisory_min_ratings})"
+            )
+        return self
 
 
 class SkuCfg(BaseModel):
@@ -113,8 +132,10 @@ class Config(BaseModel):
 
 
 def load_config(path: Path | None) -> Config:
-    if path is None or not path.exists():
+    if path is None:
         return Config()
+    if not path.exists():
+        raise ValueError(f"config file not found: {path}")
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:

@@ -17,6 +17,21 @@ def test_defaults_when_no_file() -> None:
     assert "~" not in cfg.brain.socket_path
 
 
+def test_explicit_missing_config_path_raises(tmp_path: Path) -> None:
+    # WHY: a typo'd --config must fail loud, not silently run on factory defaults.
+    missing = tmp_path / "no-such.toml"
+    with pytest.raises(ValueError, match="config file not found"):
+        load_config(missing)
+
+
+def test_feedback_window_smaller_than_min_ratings_rejected() -> None:
+    # WHY: satisfaction_window < advisory_min_ratings makes the advisory gate unreachable.
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {"feedback": {"satisfaction_window": 5, "advisory_min_ratings": 10}}
+        )
+
+
 def test_llm_send_images_defaults_off() -> None:
     # WHY: conversation screenshots bypass the regex redaction layer entirely
     # (pixels, not strings). Uploading them to the LLM must be an explicit

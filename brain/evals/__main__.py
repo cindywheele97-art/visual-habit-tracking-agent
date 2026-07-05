@@ -31,7 +31,8 @@ CASES_DIR = Path(__file__).parent / "cases"
 
 
 async def _run() -> None:
-    cfg = load_config(Path("~/.glimpse/glimpse.toml").expanduser())
+    p = Path("~/.glimpse/glimpse.toml").expanduser()
+    cfg = load_config(p if p.exists() else None)
     agent = Agent(
         client=AnthropicToolUseClient(cfg.llm.model),
         system=AGENT_SYSTEM,
@@ -58,7 +59,8 @@ async def _run() -> None:
 
 
 async def _distill() -> None:
-    cfg = load_config(Path("~/.glimpse/glimpse.toml").expanduser())
+    p = Path("~/.glimpse/glimpse.toml").expanduser()
+    cfg = load_config(p if p.exists() else None)
     redactor = Redactor(cfg.redaction.patterns)
     corpus = FeedbackLog(Path(cfg.brain.feedback_log), redactor)
     client = AnthropicLLM()

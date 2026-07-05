@@ -4,11 +4,12 @@ Run explicitly: ./.venv/bin/python -m pytest tests/test_mempalace_memory.py -m i
 
 from __future__ import annotations
 
+import logging
+from unittest.mock import patch
+
 import pytest
 
-pytestmark = pytest.mark.integration
-
-
+@pytest.mark.integration
 async def test_write_then_recall_roundtrips_scoped_to_wing(tmp_path) -> None:
     from glimpse_brain.mempalace_memory import MemPalaceMemory
 
@@ -18,3 +19,20 @@ async def test_write_then_recall_roundtrips_scoped_to_wing(tmp_path) -> None:
     assert any("破损" in h.text for h in hits)
     # scoped: a different wing sees nothing
     assert await mem.recall("其他客户", "破损退货", k=5) == []
+
+
+def test_recall_error_result_logs_and_returns_empty(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # WHY: mempalace errors must not masquerade as "no memories" without a trace.
+    from glimpse_brain.mempalace_memory import MemPalaceMemory
+
+    mem = MemPalaceMemory(palace_path=tmp_path / "palace", embedding_model="minilm")
+    with patch(
+        "mempalace.searcher.search_memories",
+        return_value={"error": "index dimension mismatch"},
+    ):
+        with caplog.at_level(logging.WARNING, logger="glimpse.memory"):
+            hits = mem._recall_sync("客户", "query", k=5)
+    assert hits == []
+    assert "mempalace recall failed" in caplog.text
