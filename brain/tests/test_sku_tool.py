@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 
+import pytest
+
 from glimpse_brain.sku.tool import MatchSkuTool
 
 IMG = base64.b64encode(b"jpeg-bytes").decode()
@@ -41,3 +43,16 @@ async def test_runtime_error_is_caught() -> None:
     tool = MatchSkuTool(FakeMatcher(None, boom=True), IMG)
     out = await tool.run({})
     assert "暂不可用" in out  # never raises into the agent loop
+
+
+async def test_match_sku_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # WHY: a silent SKU failure looks like "no match" forever — ops never know the index broke.
+    import logging
+
+    tool = MatchSkuTool(FakeMatcher(None, boom=True), IMG)
+    with caplog.at_level(logging.ERROR):
+        out = await tool.run({})
+    assert "暂不可用" in out
+    assert "match_sku failed" in caplog.text

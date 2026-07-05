@@ -4,9 +4,12 @@ the agent to confirm via read_knowledge. Fail-soft to friendly text — never ra
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
 from glimpse_brain.sku.matcher import SkuMatcher
+
+log = logging.getLogger("glimpse.sku")
 
 
 class MatchSkuTool:
@@ -27,6 +30,7 @@ class MatchSkuTool:
         try:
             matches = self._matcher.match(base64.b64decode(self._image_b64))
         except Exception:  # decode/embed/query failure must not kill the pass
+            log.exception("match_sku failed")
             return "（商品识别暂不可用）"
         if not matches:
             return "（未找到相近商品）"

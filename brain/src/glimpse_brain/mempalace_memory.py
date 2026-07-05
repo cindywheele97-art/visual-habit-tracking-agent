@@ -16,12 +16,15 @@ minimum metadata the searcher needs: wing + room (for scoped filtering).
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 from glimpse_brain.memory import MemoryHit
+
+log = logging.getLogger("glimpse.memory")
 
 # Virtual "source_file" tag for programmatic drawers so searcher metadata
 # fields are populated without an actual file on disk.
@@ -83,7 +86,10 @@ class MemPalaceMemory:
             wing=_safe_wing(customer),
             n_results=k,
         )
-        rows = result.get("results", []) if isinstance(result, dict) else []
+        if not isinstance(result, dict) or "error" in result:
+            log.warning("mempalace recall failed: %s", result)
+            return []
+        rows = result.get("results", [])
         return [
             MemoryHit(
                 text=row.get("text", ""),
