@@ -5,17 +5,44 @@ public enum CaptureError: Error {
     case noDisplayForRegion
 }
 
+/// NSObject bridge for SCStream callbacks — actor isolation cannot inherit NSObjectProtocol.
+private final class CaptureStreamBridge: NSObject, SCStreamOutput, SCStreamDelegate {
+    // Written in CaptureEngine.start before capture begins; read on frameQueue from callbacks.
+    nonisolated(unsafe) var onFrame: ((CVPixelBuffer) -> Void)?
+
+    nonisolated func stream(
+        _ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType
+    ) {
+        guard type == .screen, sampleBuffer.isValid,
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                sampleBuffer, createIfNecessary: false
+            ) as? [[SCStreamFrameInfo: Any]],
+            let statusRaw = attachments.first?[.status] as? Int,
+            statusRaw == SCFrameStatus.complete.rawValue,
+            let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+        else { return }
+        onFrame?(pixelBuffer)
+    }
+
+    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        NSLog("capture stopped: \(error.localizedDescription)")
+    }
+}
+
 /// Push-based region capture. SCK only delivers frames when content changes;
 /// `minimumFrameInterval` caps delivery at 2 fps (spec §3).
-public final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
+public actor CaptureEngine {
     private var stream: SCStream?
-    private var onFrame: ((CVPixelBuffer) -> Void)?
+    private let bridge = CaptureStreamBridge()
     private let frameQueue = DispatchQueue(label: "glimpse.capture")
+
+    public init() {}
 
     /// `region` is in CG global coordinates (origin top-left of primary display).
     public func start(region: CGRect, onFrame: @escaping (CVPixelBuffer) -> Void) async throws {
         await stop()  // no-op on first call; on re-select it stops the old stream
-        self.onFrame = onFrame
+        bridge.onFrame = onFrame
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )
@@ -40,8 +67,8 @@ public final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
         config.showsCursor = false
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        let stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
+        let stream = SCStream(filter: filter, configuration: config, delegate: bridge)
+        try stream.addStreamOutput(bridge, type: .screen, sampleHandlerQueue: frameQueue)
         try await stream.startCapture()
         self.stream = stream
     }
@@ -49,25 +76,6 @@ public final class CaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     public func stop() async {
         try? await stream?.stopCapture()
         stream = nil
-    }
-
-    public func stream(
-        _ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType
-    ) {
-        guard type == .screen, sampleBuffer.isValid,
-            let attachments = CMSampleBufferGetSampleAttachmentsArray(
-                sampleBuffer, createIfNecessary: false
-            ) as? [[SCStreamFrameInfo: Any]],
-            let statusRaw = attachments.first?[.status] as? Int,
-            statusRaw == SCFrameStatus.complete.rawValue,
-            let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        else { return }
-        onFrame?(pixelBuffer)
-    }
-
-    public func stream(_ stream: SCStream, didStopWithError error: Error) {
-        // Surfaced via the overlay when wiring in Task 17.
-        NSLog("capture stopped: \(error.localizedDescription)")
+        bridge.onFrame = nil
     }
 }

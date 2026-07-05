@@ -29,3 +29,22 @@ func gateFirstFrameAlwaysChanged() {
     #expect(!gate.isChanged([50, 50, 50]))
     #expect(gate.isChanged([50, 50, 250]))
 }
+
+@Test
+func diffGateHoldsBaselineOnUnchangedFrames() {
+    // WHY: updating baseline every sub-threshold frame resets the reference — gradual
+    // UI fades never accumulate enough delta to trigger OCR.
+    let gate = DiffGate(threshold: 0.02)
+    let n = 64
+    let base = [UInt8](repeating: 50, count: n)
+    #expect(gate.isChanged(base))
+    var triggered = false
+    for step in 1...10 {
+        let drifted = [UInt8](repeating: 50 + UInt8(step), count: n)
+        if gate.isChanged(drifted) {
+            triggered = true
+            break
+        }
+    }
+    #expect(triggered)
+}

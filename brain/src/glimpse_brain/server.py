@@ -379,6 +379,7 @@ class GlimpseServer:
                 await self._send(StatusMsg(state="degraded", detail="summary error"))
                 return
             await self._send(SummaryMsg(text=text))
+            await self._send(StatusMsg(state="watching"))
         finally:
             self._summarizing = False
 

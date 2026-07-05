@@ -168,17 +168,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func selectRegion() {
         selector = RegionSelector { [weak self] region in
+            self?.selector = nil
+            guard let region else {
+                self?.overlay.setStatus("watching", detail: "已取消")
+                return
+            }
             RegionStore.save(region)
             self?.startWatching(region: region)
-            self?.selector = nil
         }
         selector?.begin()
     }
 
     @objc private func calibrateContactRegion() {
         contactSelector = RegionSelector { [weak self] rect in
-            ContactRegionStore.save(rect)
             self?.contactSelector = nil
+            guard let rect else {
+                self?.overlay.setStatus("watching", detail: "已取消")
+                return
+            }
+            ContactRegionStore.save(rect)
             self?.overlay.setStatus("watching", detail: "联系人区域已设置")
         }
         contactSelector?.begin()
