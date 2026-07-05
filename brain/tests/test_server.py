@@ -212,6 +212,42 @@ async def test_summarize_request_returns_summary(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_summarize_does_not_block_ocr_processing(tmp_path: Path) -> None:
+    # WHY: summarize can take 30s — if it blocks _dispatch, live OCR acks stall and the shell re-sends forever.
+    cfg = make_config(tmp_path)
+    release = asyncio.Event()
+
+    class BlockingSummaryLLM:
+        async def complete(self, *, system: str, user: str, model: str) -> str:
+            await release.wait()
+            return "今天总结。"
+
+    server = GlimpseServer(
+        cfg, llm=BlockingSummaryLLM(), tool_client=FakeToolClient()
+    )
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(CLICK_LINE.encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        writer.write(b'{"type":"summarize"}\n')
+        await writer.drain()
+        await asyncio.sleep(0.05)  # let summarize task start and block on LLM
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        assert (await read_until(reader, "ack"))["seq"] == 1
+        sug = await read_until(reader, "suggestions")
+        assert sug["items"][0]["text"] == "好的，亲，马上处理"
+        release.set()
+        summary = await read_until(reader, "summary")
+        assert summary["text"] == "今天总结。"
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_replied_message_logged(tmp_path: Path) -> None:
     # WHY: a feature that sends messages to real customers must leave a record of
     # what was sent and how (fill/sent/cancelled). The audit line proves it.

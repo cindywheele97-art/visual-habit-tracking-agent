@@ -154,6 +154,7 @@ class GlimpseServer:
         self._send_lock = asyncio.Lock()
         self._region_id = ""
         self._summarizing = False
+        self._summarize_task: asyncio.Task[None] | None = None
         self._seed_satisfaction()
 
     def _new_tracker(self) -> ConversationTracker:
@@ -286,7 +287,7 @@ class GlimpseServer:
         elif isinstance(msg, FeedbackMsg):
             await self._on_feedback(msg)
         elif isinstance(msg, SummarizeRequest):
-            await self._on_summarize()
+            self._summarize_task = asyncio.create_task(self._on_summarize())
         elif isinstance(msg, OcrMsg):
             await self._on_ocr(msg)
 

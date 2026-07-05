@@ -12,8 +12,7 @@ public final class IPCClient {
     private var fd: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var lineBuffer = LineBuffer()
-    private var lastUnacked: Data?
-    private var lastUnackedSeq: Int?
+    private var spool = OutboundSpool()
 
     public init(path: String) {
         self.path = path
@@ -29,8 +28,17 @@ public final class IPCClient {
         queue.async {
             guard let data = try? Wire.encodeLine(msg) else { return }
             if let seq = ackSeq {
-                self.lastUnacked = data
-                self.lastUnackedSeq = seq
+                self.spool.setUnacked(data, seq: seq)
+            } else if self.fd < 0 {
+                let before = self.spool.droppedCount
+                self.spool.enqueue(data)
+                if self.spool.droppedCount > before {
+                    // Fail loud: a full offline queue drops the OLDEST message,
+                    // which can be a RepliedMsg auto-send audit record. Never
+                    // let that vanish silently.
+                    NSLog("IPC outbound queue full — dropped \(self.spool.droppedCount) oldest message(s) during brain outage")
+                }
+                return
             }
             self.writeData(data)
         }
@@ -49,7 +57,7 @@ public final class IPCClient {
         lineBuffer = LineBuffer()
         startReading()
         DispatchQueue.main.async { self.onConnect?() }
-        if let pending = lastUnacked {
+        for pending in spool.drainOnConnect() {
             writeData(pending)
         }
     }
@@ -70,9 +78,8 @@ public final class IPCClient {
         }
         for line in lineBuffer.feed(Data(buf[0..<n])) {
             guard let msg = Wire.decodeBrainMessage(line) else { continue }
-            if case .ack(let ack) = msg, ack.seq == lastUnackedSeq {
-                lastUnacked = nil
-                lastUnackedSeq = nil
+            if case .ack(let ack) = msg {
+                spool.onAck(ack.seq)
             }
             DispatchQueue.main.async { self.onMessage?(msg) }
         }
