@@ -94,7 +94,9 @@ class GlimpseServer:
     ) -> None:
         self._cfg = cfg
         self._redactor = Redactor(cfg.redaction.patterns)
-        self._events = EventLog(Path(cfg.brain.event_log), self._redactor)
+        self._events = EventLog(
+            Path(cfg.brain.event_log), self._redactor, cfg.brain.event_log_max_bytes
+        )
         # Conversation state is PER customer: the active tracker follows the
         # contact on screen; parked trackers keep their positional anchor,
         # tail, and text dedup so revisits restore context without re-firing.

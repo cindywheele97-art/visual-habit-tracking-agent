@@ -23,6 +23,7 @@ class BrainCfg(BaseModel):
     playbook: str = Field(default_factory=lambda: str(Path("~/.glimpse/playbook.md").expanduser()))
     feedback_log: str = Field(default_factory=lambda: str(Path("~/.glimpse/feedback.jsonl").expanduser()))
     knowledge_dir: str = Field(default_factory=lambda: str(Path("~/.glimpse/knowledge").expanduser()))
+    event_log_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
 
     @field_validator("socket_path", "event_log", "playbook", "feedback_log", "knowledge_dir", mode="before")
     @classmethod

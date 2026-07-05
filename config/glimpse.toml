@@ -3,6 +3,7 @@
 [brain]
 socket_path = "~/.glimpse/glimpse.sock"
 event_log = "~/.glimpse/events.jsonl"
+# event_log_max_bytes = 52428800  # optional cap before single-generation rotation; default 50 MiB
 playbook = "~/.glimpse/playbook.md"
 
 [llm]
