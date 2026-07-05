@@ -22,6 +22,10 @@
 | shell 测试 | **61 passed** | `cd shell && swift test` |
 | shell 构建 | **Build complete** | `cd shell && swift build` |
 
+## 计划修订机制（Planner 定，取代任何平行冻结副本）
+
+本文件是唯一真相源；git 已在 `fde9c6b` 不可变冻结初版。**禁止**创建 `.BACKUP.md` 或平行 `notes/` 目录——冗余副本必然与 git 版本漂移。需要修订计划时：**由 Planner 直接编辑本文件并提交一个 commit**，message 写清"改了什么/为什么/对下游影响"，`git blame`/`git log` 即完整追溯。Cursor 执行期间**不许改本文件**——发现计划有误，把问题交回 Planner，由 Planner 提交修订。每阶段验收后 Planner 在该阶段末尾追加一条 `✅ 已验收` 记录（含 commit 号）。
+
 ## 全局规则（每个阶段隐含包含本节）
 
 1. **分支纪律：** 每阶段 `git checkout -b phase-N-<slug>`（从 main 切出）。阶段内小步提交（conventional commits：`fix:`/`test:`/`refactor:`/`docs:`）。验收全过 → merge 回 main（`--no-ff`）。验收不过且无法在阶段范围内修复 → **放弃分支**（`git checkout main && git branch -D phase-N-<slug>`），把失败原因写成报告交回 Planner，**不许把红的状态 merge 进 main**。
@@ -61,7 +65,9 @@
 
 **坑点：** ① `chmod` 制造的只读目录在 tmp_path 清理时可能报错——测试结尾恢复权限；② 轮转判断用 `path.stat().st_size`，文件不存在时 `FileNotFoundError` 要当 size=0 处理；③ 别引入后台线程/定时器做轮转——append 时同步判断即可（YAGNI）。
 
-**验收标准：** 基线四命令全绿（brain 测试数 ≥ 198）；`grep -rn "os.fsync" brain/src` 仍存在（fsync 语义保留，本阶段不许动）；新增测试删掉 `try/except OSError` 实现后能变红（Cursor 自查一次再改回来）。
+**验收标准：** 基线四命令全绿（brain 测试数 ≥ 197 — Planner 修订：原写 198 系笔误，`test_append_still_writes_redacted` 是既有 `test_payload_is_redacted_before_write` 的重命名而非净增，净增 2 条 → 195+2=197）；`grep -rn "os.fsync" brain/src` 仍存在（fsync 语义保留，本阶段不许动）；新增测试删掉 `try/except OSError` 实现后能变红（Cursor 自查一次再改回来）。
+
+> **✅ Phase 1 已验收并 merge（commit `d0a6a49` / merge `977f3f9`，2026-07-04）。** Gate 记录：197 passed / ruff clean / mypy 10（未新增）/ shell 61 pass；Planner 独立变异测试确认两个新 pin 有牙齿；Cursor 提议的 `BACKUP.md` + `notes/` 平行冻结副本被驳回（git 已冻结 plan，见下条修订规矩）。
 
 ---
 
