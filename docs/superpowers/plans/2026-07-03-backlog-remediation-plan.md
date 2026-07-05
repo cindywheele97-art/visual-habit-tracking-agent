@@ -158,6 +158,8 @@
 
 **验收标准：** 基线四命令全绿（brain ≥ 204）；`git grep -n "_safe_wing" brain/src` 零结果。
 
+> **✅ Phase 4 已验收并 merge（commit `f2ec496` / merge `0e5f203`，2026-07-05）。** Gate 记录：brain 207 / ruff clean / mypy 10（未新增）/ `_safe_wing` 在 brain/src 零残留（唯一命中是测试注释,说明被钉的历史 bug,合规）。**Planner 重点核查(单测覆盖不到的)**：读代码确认 `_recall_sync` 与 `_write_sync` **共用同一 `_wing()`**（写读同源,不会一个键写另一个键读）；`customer_display` 存本地 metadata、recall 只返回 `MemoryHit(text/kind/score)` 不含 metadata → 原始名不外泄到 LLM。变异有牙齿。**本阶段零 Planner 修正** —— Cursor 首次一次过。
+
 ---
 
 ## Phase 5 — Shell 捕获与 UI 修整（shell + brain 一行）
