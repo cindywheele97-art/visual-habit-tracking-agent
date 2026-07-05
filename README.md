@@ -11,7 +11,7 @@ Spec: `docs/superpowers/specs/2026-06-11-glimpse-v1-design.md`.
 cd brain && python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Shell (Swift 5.9+, macOS 13+)
+# Shell (Swift 5.9+, macOS 14+)
 cd ../shell && swift build
 
 # Your playbook (edit it — suggestions are grounded in this file)

@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -28,7 +29,7 @@ class OkfDoc:
     body: str
 
 
-def _split_frontmatter(text: str) -> tuple[dict, str]:
+def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """Return (frontmatter dict, body). A leading '---' fence line delimits the
     YAML block; no fence — or fenced content that isn't a YAML mapping (e.g. a
     doc that opens with a horizontal rule) — means empty frontmatter and the
@@ -41,7 +42,7 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
             # fences must not leak into the body.
             return {}, text[match.end() :].lstrip("\n")
         if isinstance(meta, dict):
-            return meta, text[match.end() :].lstrip("\n")
+            return cast(dict[str, object], meta), text[match.end() :].lstrip("\n")
         # Scalar/list "frontmatter" is prose between horizontal rules → body.
     return {}, text
 

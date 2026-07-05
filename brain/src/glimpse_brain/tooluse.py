@@ -4,9 +4,11 @@ makes a future OpenAI/third-party client a drop-in (common path only)."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
+
+from anthropic.types import MessageParam
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,6 @@ class AnthropicToolUseClient:
                 {"name": t.name, "description": t.description, "input_schema": t.input_schema}
                 for t in tools
             ],
-            messages=_to_anthropic_messages(transcript),
+            messages=cast(Iterable[MessageParam], _to_anthropic_messages(transcript)),
         )
         return _step_from_response(response)

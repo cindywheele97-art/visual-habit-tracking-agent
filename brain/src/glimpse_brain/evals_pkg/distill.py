@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import cast
 
 from glimpse_brain.feedback import FeedbackRecord
 
@@ -44,9 +45,9 @@ def _strings(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-def response_to_case(raw: str, case_id: str, conversation: list[str]) -> dict:
+def response_to_case(raw: str, case_id: str, conversation: list[str]) -> dict[str, object]:
     decoder = json.JSONDecoder()
-    body: dict = {}
+    body: dict[str, object] = {}
     for i, ch in enumerate(raw):
         if ch != "{":
             continue
@@ -55,7 +56,7 @@ def response_to_case(raw: str, case_id: str, conversation: list[str]) -> dict:
         except json.JSONDecodeError:
             continue
         if isinstance(candidate, dict):
-            body = candidate
+            body = cast(dict[str, object], candidate)
             break
     notes = body.get("notes", "")
     return {

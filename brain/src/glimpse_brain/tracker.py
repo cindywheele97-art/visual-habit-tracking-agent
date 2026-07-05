@@ -140,7 +140,7 @@ class ConversationTracker:
         # Known limitation (v1): side is assigned per OCR line, not per chat
         # bubble. A wrapped bubble whose lines have different x-centroids can
         # split one logical message across "in"/"out". Bubble-aware grouping
-        # is deferred; the settle gate + suggester tail soften the impact.
+        # is deferred; the settle gate + agent tail soften the impact.
         center = (block.x0 + block.x1) / 2
         return "in" if center < self._side_threshold else "out"
 

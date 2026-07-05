@@ -17,6 +17,14 @@ if [[ ! -f "$CONFIG" ]]; then
   cp config/glimpse.toml "$CONFIG"
   echo "seeded $CONFIG from config/glimpse.toml"
 fi
+if [[ ! -d "$HOME/.glimpse/knowledge" ]]; then
+  cp -R playbook/knowledge "$HOME/.glimpse/knowledge"
+  echo "seeded $HOME/.glimpse/knowledge from playbook/knowledge"
+fi
+if [[ ! -f "$HOME/.glimpse/playbook.md" ]]; then
+  cp playbook/playbook.md "$HOME/.glimpse/playbook.md"
+  echo "seeded $HOME/.glimpse/playbook.md from playbook/playbook.md"
+fi
 
 (cd brain && source .venv/bin/activate && exec python -m glimpse_brain --config "$CONFIG") &
 BRAIN_PID=$!
