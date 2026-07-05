@@ -218,13 +218,21 @@
 
 **验收标准（本阶段最严）：**
 ```
-cd brain && ./.venv/bin/python -m pytest -q          # ≥ 207 passed（含新增3、删除 suggester 的 -N）
+cd brain && ./.venv/bin/python -m pytest -q          # Planner 修订：≥ 203（原写 ≥207 系笔误——同阶段既删 8 条 suggester 测试又没在 floor 里减掉；208+2 新−7 净删=203）
 cd brain && ./.venv/bin/python -m ruff check src tests  # All checks passed
-cd brain && ./.venv/bin/python -m mypy               # Success: no issues found ← 本阶段核心指标
+cd brain && ./.venv/bin/python -m mypy               # Success: no issues found ← 本阶段核心硬门槛
 cd shell && swift test && swift build                 # 61+ passed, Build complete
 bash -n scripts/dev.sh                                # 语法通过
 ```
 外加自查：把 `server.py` 里 memory 写入前的 `self._redactor.redact(line)` 临时改成 `line` → `test_memory_capture_is_redacted` 必须变红（这是本阶段存在的意义），改回。
+
+> **✅ Phase 6 已验收并 merge（commit `1c51621` / merge `a5652c7`，2026-07-05）—— 本批 Backlog Remediation 执行侧全部交付。** Gate 记录：**mypy `Success: no issues found in 35 source files`（硬门槛达成）** / brain 203 / ruff clean / shell 67 / `bash -n` 通过。Planner 逐行核对**所有源码改动均为注解级**（`cast`/`TypedDict`/`TYPE_CHECKING`/返回类型/注释,运行时 no-op）→ 零行为变更；无 `type: ignore`；suggester 删除但 RateLimiter 覆盖经合法迁移保留（`test_rate_limiter_window`→test_summarizer,真行为测试非重言式）；satisfaction 测试去 `_advised` 改断言可观测返回值；memory-redact pin 变异有牙齿；numpy/onnxruntime 可 import。**203 计数正确、无测试被静默丢弃**（净删 7 全是 suggester 死代码）。
+
+---
+
+## 全批收官（2026-07-05）
+
+Phase 1–6 全部经独立 gate（Planner 不看报告、亲跑命令 + 读 diff + 变异验证）通过并 merge 进 main，链：`fde9c6b`(plan) → Phase1 `977f3f9` → P2 `d0ad431` → P3 `32c8f05` → P4 `0e5f203` → P5 `431d663` → P6 `a5652c7`。**Planner 修正 3 处 Cursor 漏掉/我笔误**：P2 离线队列丢消息补 fail-loud NSLog；P3 分隔数字 pattern 过度脱敏日期时间（改同质分隔符）；P1/P6 测试 floor 笔误订正。**潜在限制 1 条**（不阻断）：P5 CaptureEngine actor 可重入泄漏，UI 门控下不可达，Phase 7+ 若程序化快速重采需补 startTask 链式串行。全程本地 commit，**未 push**（外发留给用户）。
 
 ---
 
