@@ -4,6 +4,7 @@ existing LLMClient.complete seam so tests inject a fake. Fail-closed parsing."""
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from glimpse_brain.llm import LLMClient
 
@@ -29,7 +30,7 @@ def parse_judge_json(raw: str, dims: list[str]) -> dict[str, bool]:
     # Scan each "{" and take the first that decodes to a JSON object, ignoring
     # any prose the model wraps around it (raw_decode stops at the object's end,
     # so trailing prose is fine; a non-JSON "{" earlier is skipped).
-    data: dict = {}
+    data: dict[str, object] = {}
     decoder = json.JSONDecoder()
     for i, ch in enumerate(raw):
         if ch != "{":
@@ -39,7 +40,7 @@ def parse_judge_json(raw: str, dims: list[str]) -> dict[str, bool]:
         except json.JSONDecodeError:
             continue
         if isinstance(candidate, dict):
-            data = candidate
+            data = cast(dict[str, object], candidate)
             break
     # fail-closed: ONLY an explicit boolean true passes; missing, null, or a
     # non-bool truthy value (1, "true", ...) counts as not-passed.

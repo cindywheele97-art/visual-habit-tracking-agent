@@ -238,6 +238,68 @@ async def test_summary_returns_status_to_watching(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_memory_capture_is_redacted(tmp_path: Path) -> None:
+    # WHY: memory write is a privacy boundary — redaction must happen before capture, not only at the LLM.
+    from glimpse_brain.memory import MemoryHit
+
+    class CapturingMemory:
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str, str]] = []
+
+        async def write(self, customer: str, text: str, kind: str) -> None:
+            self.writes.append((customer, text, kind))
+
+        async def recall(self, customer: str, query: str, k: int) -> list[MemoryHit]:
+            return []
+
+    mem = CapturingMemory()
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(
+        cfg, llm=FakeLLM(), tool_client=FakeToolClient(), memory=mem
+    )
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+        writer.write(
+            (
+                '{"type":"ocr","seq":1,"ts":"t","region_id":"region-1","contact":"小明",'
+                '"blocks":[{"text":"我的电话13812345678","x0":0.05,"x1":0.4,"conf":0.95}]}\n'
+            ).encode()
+        )
+        await writer.drain()
+        await read_until(reader, "suggestions")
+        assert mem.writes
+        assert all("13812345678" not in text for _, text, _ in mem.writes)
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_malformed_line_keeps_connection_alive(tmp_path: Path) -> None:
+    # WHY: one bad NDJSON line must not kill the shell session — log it and keep serving OCR.
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(b"not json\n")
+        await writer.drain()
+        writer.write((OCR_LINE % (1, "在吗，包邮吗？")).encode())
+        await writer.drain()
+        assert (await read_until(reader, "ack"))["seq"] == 1
+        await read_until(reader, "suggestions")
+        log = Path(cfg.brain.event_log).read_text(encoding="utf-8")
+        assert "bad-message" in log
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_summarize_does_not_block_ocr_processing(tmp_path: Path) -> None:
     # WHY: summarize can take 30s — if it blocks _dispatch, live OCR acks stall and the shell re-sends forever.
     cfg = make_config(tmp_path)
@@ -380,7 +442,7 @@ async def test_server_captures_interactions_and_passes_customer(tmp_path: Path) 
 
 
 async def test_agent_drives_suggestions_and_logs_agent_turn(tmp_path: Path) -> None:
-    # WHY: the agent replaces the suggester on the suggestion path; its turn is
+    # WHY: the agent owns the suggestion path; its turn is
     # auditable (tools used + draft count, logged before the user sees drafts)
     # and the full tool-call -> tool-result -> finalize path works through the server.
 

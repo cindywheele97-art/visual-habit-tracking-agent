@@ -1,4 +1,4 @@
-"""Shared LLM client + rate limiter (used by suggester and summarizer)."""
+"""Shared LLM client + rate limiter (used by agent and summarizer)."""
 
 from __future__ import annotations
 

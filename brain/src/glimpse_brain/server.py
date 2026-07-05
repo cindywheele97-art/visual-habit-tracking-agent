@@ -7,6 +7,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 from glimpse_brain.config import Config
 from glimpse_brain.errors import CostCapExceeded, SuggestionParseError
@@ -42,6 +43,9 @@ from glimpse_brain.tooluse import AnthropicToolUseClient, ToolUseClient
 from glimpse_brain.summarizer import Summarizer
 from glimpse_brain.tracker import ConversationTracker
 
+if TYPE_CHECKING:
+    from glimpse_brain.sku.matcher import SkuMatcher
+
 log = logging.getLogger("glimpse.server")
 
 # OcrMsg lines carry a base64 region screenshot (typically 100-300 KB; the shell
@@ -56,6 +60,12 @@ class _Unset:
 
 
 _UNSET = _Unset()
+
+class _SuggestionSnapshot(TypedDict, total=False):
+    tail: list[str]
+    items: dict[str, str]
+    stale_sent: bool
+
 
 AGENT_SYSTEM = """\
 你是一名资深电商客服 agent，为人工客服起草候选回复。
@@ -120,7 +130,7 @@ class GlimpseServer:
         )
         # region_id -> {"tail": [...], "items": {suggestion_id: text}} captured at
         # suggestion time, so feedback resolves the exact draft + conversation.
-        self._last_suggestions: dict[str, dict] = {}
+        self._last_suggestions: dict[str, _SuggestionSnapshot] = {}
         self._agent = Agent(
             client=tool_client if tool_client is not None
             else AnthropicToolUseClient(cfg.llm.model),
@@ -180,7 +190,7 @@ class GlimpseServer:
             return None
 
     @staticmethod
-    def _build_sku(cfg: Config):  # -> SkuMatcher | None
+    def _build_sku(cfg: Config) -> SkuMatcher | None:
         if not cfg.sku.enabled:
             return None
         try:
@@ -417,7 +427,7 @@ class GlimpseServer:
         # Deliver them stale so auto-send refuses them; stale_sent stops a
         # re-mark.
         stale = self._tracker.tail() != tail
-        snapshot: dict[str, object] = {
+        snapshot: _SuggestionSnapshot = {
             "tail": tail,
             "items": {it.id: it.text for it in items},
         }

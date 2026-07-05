@@ -44,6 +44,15 @@ def make_summarizer(tmp_path: Path, llm: FakeLLM, log: Path, max_per_minute: int
     )
 
 
+def test_rate_limiter_window() -> None:
+    now = [0.0]
+    limiter = RateLimiter(2, clock=lambda: now[0])
+    assert limiter.allow() and limiter.allow()
+    assert not limiter.allow()
+    now[0] = 61.0
+    assert limiter.allow()
+
+
 async def test_summary_grounded_in_clicked_text(tmp_path: Path) -> None:
     # WHY: the summary must reflect what was actually clicked, not invented.
     log = tmp_path / "events.jsonl"

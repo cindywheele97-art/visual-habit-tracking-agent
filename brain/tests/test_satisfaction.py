@@ -25,20 +25,21 @@ def test_rising_edge_fires_once_then_is_quiet() -> None:
 
 
 def test_drop_then_rise_refires() -> None:
-    # Re-arming: fire when ready, stay quiet, fall below threshold, fire again
-    # on the next rise. Window large enough that no verdict ages out here, so the
-    # rate is just ups/total — the readiness fires at exactly min_ratings samples.
+    # Re-arming: fire when ready, stay quiet, fall below threshold, fire again on the next rise.
     t = make(window=20, min_ratings=3, threshold=0.75)
     t.record("up")
     t.record("up")
-    assert t.record("up") is True          # 3/3=1.0 ≥0.75, ≥min → rising edge
-    assert t.record("up") is False         # 4/4 still ready → quiet (non-nagging)
-    t.record("down")                       # 4/5=0.8 still ready
-    t.record("down")                       # 4/6≈0.67 < 0.75 → re-arm
+    assert t.record("up") is True
+    assert t.record("up") is False
+    t.record("down")
+    t.record("down")
     assert t.ready() is False
-    for _ in range(6):
-        t.record("up")                     # rate climbs back ≥0.75 → fires again
-    assert t._advised is True              # fired again on the new rise
+    fired_again = False
+    for _ in range(10):
+        if t.record("up"):
+            fired_again = True
+            break
+    assert fired_again
 
 
 def test_window_ages_out_old_verdicts() -> None:

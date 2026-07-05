@@ -110,7 +110,7 @@ class Agent:
                 tools_used.append(call.name)
                 tool = registry.get(call.name)
                 if tool is None:
-                    output = f"unknown tool: {call.name}"
+                    output: str | ToolImage = f"unknown tool: {call.name}"
                 else:
                     try:
                         output = await tool.run(call.input)
