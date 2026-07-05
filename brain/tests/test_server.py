@@ -212,6 +212,32 @@ async def test_summarize_request_returns_summary(tmp_path: Path) -> None:
         task.cancel()
 
 
+async def test_summary_returns_status_to_watching(tmp_path: Path) -> None:
+    # WHY: summarize leaves the overlay stuck on "thinking" unless the brain resets status.
+    cfg = make_config(tmp_path)
+
+    class SummaryLLM:
+        async def complete(self, *, system: str, user: str, model: str) -> str:
+            return "今天总结。"
+
+    server = GlimpseServer(cfg, llm=SummaryLLM())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(CLICK_LINE.encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        writer.write(b'{"type":"summarize"}\n')
+        await writer.drain()
+        assert (await read_until(reader, "status"))["state"] == "thinking"
+        await read_until(reader, "summary")
+        assert (await read_until(reader, "status"))["state"] == "watching"
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_summarize_does_not_block_ocr_processing(tmp_path: Path) -> None:
     # WHY: summarize can take 30s — if it blocks _dispatch, live OCR acks stall and the shell re-sends forever.
     cfg = make_config(tmp_path)

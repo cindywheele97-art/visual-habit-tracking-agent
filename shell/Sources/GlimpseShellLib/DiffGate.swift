@@ -50,8 +50,14 @@ public final class DiffGate {
 
     /// True when the frame differs enough from the previous one to be worth OCR.
     public func isChanged(_ samples: [UInt8]) -> Bool {
-        defer { previous = samples }
-        guard let prev = previous else { return true }
-        return Diff.score(prev, samples) > threshold
+        guard let prev = previous else {
+            previous = samples
+            return true
+        }
+        if Diff.score(prev, samples) > threshold {
+            previous = samples
+            return true
+        }
+        return false
     }
 }

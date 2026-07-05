@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Periodically captures + OCRs the calibrated contact-name region and exposes the
 /// latest detected name. Decoupled from the per-frame OCR path (names change
@@ -6,15 +7,11 @@ import AppKit
 public final class ContactReader {
     private let region: () -> CGRect?
     private var timer: Timer?
-    // Written on main (the timer/MainActor hop), read from the capture queue in
-    // processFrame (it becomes OcrMsg.contact, the memory key). A deliberate,
-    // bounded-staleness race on a value-type String: after a chat switch the
-    // name may lag by up to one timer interval (~3s), so at most a handful of
-    // interaction lines get attributed to the previous customer before it
-    // corrects — a low-frequency, low-consequence error not worth actor
-    // isolation under the package's main-confined-by-convention model.
-    // See WatchFlags for the same confinement-by-comment pattern.
-    public private(set) var current: String = ""
+    private let currentLock = OSAllocatedUnfairLock(initialState: "")
+
+    public var current: String {
+        currentLock.withLock { $0 }
+    }
 
     public init(region: @escaping () -> CGRect? = { ContactRegionStore.load() }) {
         self.region = region
@@ -57,7 +54,7 @@ public final class ContactReader {
                 .map(\.text).joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             await MainActor.run {
-                self.current = name  // keep the poll cache fresh too
+                self.currentLock.withLock { $0 = name }
                 completion(name)
             }
         }
