@@ -79,6 +79,16 @@
 
 **验收哲学不变**：每阶段独立分支 + 四命令门 + 变异自查 + Planner 独立 gate（沿用 backlog remediation 的流程，全程有效）。
 
+> **✅ P7.1+P7.2 已交付（merge `5ff3d79`，2026-07-16）**：归档轮转 + SQLite 行为库 + habit passthrough；window_title join key + AttentionSensor dwell + 点击完整性。审查修正：AX URL 读取撤出热路径（URL 归 P7.4 扩展）、dwell 按 app 分界、idle 用 hidSystemState。
+>
+> **✅ P7.3 已交付（merge `66a3c72`，2026-07-16）——飞轮第一圈闭合**。经 **8 轮执行型对抗 gate** 收敛（每轮发现均被实际执行复现后修复，最终轮双对抗者 0 复现；sessions.py 通过 400 随机操作日 × 每事件边界重启的 fuzz 零分歧）。最终语义（sessions.py 模块 docstring 为准）：
+> - 点击=主动事实（FIFO）开 run、赋值时钟；**标记窗内的隐式点击=流程噪声**（""、零副作用）——幻影 run 从构造上不存在
+> - dwell=被动区间证据：按 span **中点**归属（早于当前 run 开启→归前任）、游离(超 gap)→"" 惰性、只在 run 开启时推进时钟
+> - `end(ts)` 开标记窗（锚定显式关闭）；`bind_outcome` 滑动窗口（长批次标记不翻转）；`begin` 清窗
+> - Sessionizer 状态**逐字快照**随每个行为事件同事务持久化,重启逐字恢复（反推事件行=有损投影,已废）
+> - **接受的代价（记录在案）**：end 后不按 begin 的浏览在（滑动）宽限窗内无归属；纯滚动轨迹在 P7.4 扩展层之前保持粗粒度
+> - 防复发结构：rehydrate 全字段必传（新 snapshot 字段漏传=mypy 编译期错误）
+
 ## 八、风险与边界
 
 - **隐私**：自我追踪 ≠ 无隐私——浏览记录含个人内容；habit 事件本地明文的前提是"数据不出本机"；一旦未来做云同步/多设备，脱敏分道策略要重审。
