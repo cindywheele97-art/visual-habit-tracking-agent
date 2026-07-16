@@ -301,6 +301,80 @@ async def test_selection_start_click_outcome_share_session_and_survive_redaction
         task.cancel()
 
 
+async def test_outcome_after_end_binds_to_the_closed_run(tmp_path: Path) -> None:
+    # WHY (review finding, high): 结束选品 then 标记淘汰 must attach the verdict to
+    # the run just finished, not to "" — an orphaned outcome is permanently
+    # unjoinable to the trajectory it grades.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(
+            b'{"type":"selection_control","ts":"2026-07-16T09:00:00Z","action":"start"}\n'
+        )
+        writer.write(_click("2026-07-16T09:00:10Z"))
+        writer.write(
+            b'{"type":"selection_control","ts":"2026-07-16T09:05:00Z","action":"end"}\n'
+        )
+        writer.write(
+            '{"type":"selection_outcome","ts":"2026-07-16T09:05:02Z",'
+            '"product_key":"P","verdict":"rejected","note":""}\n'.encode()
+        )
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        click_sid = store.query(kind="click")[0]["session_id"]
+        outcome_sid = store.query(kind="selection_outcome")[0]["session_id"]
+        assert outcome_sid != ""
+        assert outcome_sid == click_sid  # bound to the run it graded
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_late_dwell_does_not_split_a_continuous_run(tmp_path: Path) -> None:
+    # WHY (review finding, high): a DwellMsg closes AFTER the clicks in its span
+    # but carries an earlier start; stamping/segmenting on it must not rewind the
+    # recency clock and split one continuous trajectory in two.
+    from glimpse_brain.sessions import Sessionizer
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(
+        cfg, llm=FakeLLM(), tool_client=FakeToolClient(),
+        sessionizer=Sessionizer(idle_gap_seconds=900),
+    )
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(_click("2026-07-16T09:00:00Z"))   # run opens, clock 09:00
+        writer.write(_click("2026-07-16T09:10:00Z"))   # same run, clock 09:10
+        # dwell that started 09:00, closes 09:20 — arrives now, backdated start.
+        writer.write(
+            b'{"type":"dwell","app":"com.google.Chrome","start_ts":"2026-07-16T09:00:00Z",'
+            b'"end_ts":"2026-07-16T09:20:00Z","seconds":1200.0}\n'
+        )
+        # 14min after the dwell END (09:20) but 24min after the last click:
+        # only if the dwell correctly advanced recency to its end does this
+        # stay one run — stamping by start_ts would have split it here.
+        writer.write(_click("2026-07-16T09:34:00Z"))
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        click_sids = {r["session_id"] for r in store.query(kind="click")}
+        assert len(click_sids) == 1  # one continuous run, not split by the dwell
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
     # WHY: '结束选品' is a ground-truth boundary — the next click is a new run
     # even within the idle gap.

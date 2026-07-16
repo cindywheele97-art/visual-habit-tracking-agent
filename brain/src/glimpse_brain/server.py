@@ -343,7 +343,11 @@ class GlimpseServer:
                 },
             )
         elif isinstance(msg, DwellMsg):
-            sid = self._sessions.observe(_epoch(msg.start_ts))
+            # A dwell is passive evidence and arrives when it CLOSES (after the
+            # clicks in its span): stamp by end_ts and opens=False so a backdated
+            # interval can't rewind the recency clock, split a run, or open a
+            # phantom session.
+            sid = self._sessions.observe(_epoch(msg.end_ts), opens=False)
             interval = {
                 "app": msg.app,
                 "window_title": msg.window_title,
@@ -388,9 +392,10 @@ class GlimpseServer:
                 payload={"action": msg.action},
             )
         elif isinstance(msg, SelectionOutcomeMsg):
-            # The flywheel's target variable, attached to the ACTIVE session
-            # (current() — an outcome does not open or extend a trajectory).
-            sid = self._sessions.current()
+            # The flywheel's target variable, attached to the run it describes:
+            # the active one, or the one just closed by 结束选品 (last_session,
+            # not current — else 结束选品→标记 orphans the verdict with "").
+            sid = self._sessions.last_session()
             self._events.append(
                 "selection_outcome",
                 "",
