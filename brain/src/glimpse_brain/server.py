@@ -367,8 +367,8 @@ class GlimpseServer:
                     "texts": texts,
                     "capture_ok": msg.capture_ok,
                 },
+                state=self._sessions.snapshot(),
             )
-            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, DwellMsg):
             # A dwell is passive evidence and arrives when it CLOSES (after the
             # clicks in its span). observe_span decides by the span's START:
@@ -400,8 +400,8 @@ class GlimpseServer:
                     "end_ts": msg.end_ts,
                     "seconds": msg.seconds,
                 },
+                state=self._sessions.snapshot(),
             )
-            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, SelectionControlMsg):
             # Ground-truth trajectory boundary. `start` forces a fresh session;
             # `end` closes the current one (its id is recorded before closing so
@@ -423,15 +423,15 @@ class GlimpseServer:
                 ts=msg.ts,
                 session_id=sid,
                 payload={"action": msg.action},
+                state=self._sessions.snapshot(),
             )
-            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, SelectionOutcomeMsg):
             # The flywheel's target variable, attached to the run it describes:
             # the active one, or — within the idle gap — the one just closed by
             # 结束选品 (else 结束选品→标记 orphans the verdict with ""). Beyond
             # the gap it is honestly sessionless rather than mislabeling a
             # long-dead run.
-            sid = self._sessions.last_session(at=_epoch(msg.ts))
+            sid = self._sessions.bind_outcome(at=_epoch(msg.ts))
             self._events.append(
                 "selection_outcome",
                 "",
@@ -452,8 +452,8 @@ class GlimpseServer:
                     "verdict": msg.verdict,
                     "note": msg.note,
                 },
+                state=self._sessions.snapshot(),
             )
-            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, FeedbackMsg):
             await self._on_feedback(msg)
         elif isinstance(msg, SummarizeRequest):

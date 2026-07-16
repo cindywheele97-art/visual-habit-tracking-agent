@@ -460,11 +460,13 @@ async def test_restart_in_grace_window_keeps_deliberate_close_wins(tmp_path: Pat
         store = BehaviorStore(Path(cfg.brain.behavior_db))
         clicks = store.query(kind="click")
         run_a = clicks[0]["session_id"]          # 10:10 click inside run A
-        phantom_b = clicks[1]["session_id"]      # 10:30:05 tab-focus click
-        assert run_a != phantom_b
+        assert run_a != ""
+        # gate round 6: tab-focus clicks during the marking window are flow
+        # NOISE — they open no phantom run, before or after the restart.
+        assert clicks[1]["session_id"] == ""     # 10:30:05 tab-focus click
+        assert clicks[2]["session_id"] == ""     # post-restart marking click
         outcome_sid = store.query(kind="selection_outcome")[0]["session_id"]
         assert outcome_sid == run_a              # deliberate close still wins
-        assert clicks[2]["session_id"] == phantom_b  # implicit run unsplit too
         store.close()
         writer.close()
     finally:
@@ -512,9 +514,10 @@ async def test_restart_after_long_dwell_does_not_split_the_run(tmp_path: Path) -
         task2.cancel()
 
 
-async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
-    # WHY: '结束选品' is a ground-truth boundary — the next click is a new run
-    # even within the idle gap.
+async def test_selection_end_suppresses_marking_clicks(tmp_path: Path) -> None:
+    # WHY (semantics converged in gate round 6): after '结束选品' the grace
+    # window treats implicit clicks as marking-flow noise (session_id "") —
+    # they must not open a phantom run that steals verdicts.
     from glimpse_brain.store import BehaviorStore
 
     cfg = make_config(tmp_path)
@@ -532,7 +535,8 @@ async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
         await _drain_dispatch(reader, writer)
         store = BehaviorStore(Path(cfg.brain.behavior_db))
         rows = store.query(kind="click")
-        assert rows[0]["session_id"] != rows[1]["session_id"]
+        assert rows[0]["session_id"] != ""
+        assert rows[1]["session_id"] == ""  # marking-window click: flow noise
         store.close()
         writer.close()
     finally:

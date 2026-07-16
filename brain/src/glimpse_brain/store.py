@@ -84,7 +84,12 @@ class BehaviorStore:
         url: str = "",
         session_id: str = "",
         payload: dict[str, object] | None = None,
+        state: dict[str, object] | None = None,
     ) -> None:
+        """Insert an event row and, when `state` is given, the sessionizer
+        snapshot — in ONE transaction. A crash between separate commits left
+        the snapshot referencing a run the event table didn't show (or vice
+        versa), splitting the run on rehydration (merge-gate finding)."""
         if self._conn is None:
             return
         try:
@@ -103,6 +108,12 @@ class BehaviorStore:
                     json.dumps(payload or {}, ensure_ascii=False),
                 ),
             )
+            if state is not None:
+                self._conn.execute(
+                    "INSERT INTO session_state (id, state) VALUES (1, ?)"
+                    " ON CONFLICT(id) DO UPDATE SET state = excluded.state",
+                    (json.dumps(state, ensure_ascii=False),),
+                )
             self._conn.commit()
         except sqlite3.Error as exc:
             log.warning("behavior store append failed: %s", exc)

@@ -35,12 +35,19 @@ def test_explicit_begin_forces_a_fresh_boundary() -> None:
     assert s.observe(1020.0) == second
 
 
-def test_end_then_observe_opens_a_new_session() -> None:
+def test_end_then_observe_is_marking_noise_until_window_expires() -> None:
+    # WHY (gate round 6): the marking flow's own tab-focus clicks created
+    # phantom runs that hijacked anchors and stole verdicts. After an explicit
+    # end, implicit clicks within the grace window are flow noise: no run, no
+    # side effects. Implicit segmentation resumes once the window expires.
     s = Sessionizer(idle_gap_seconds=900)
     first = s.observe(1000.0)
     s.end(1005.0)
     assert s.current() == ""
-    assert s.observe(1010.0) != first  # fresh, even within the gap
+    assert s.observe(1010.0) == ""       # marking noise, opens nothing
+    assert s.current() == ""
+    later = s.observe(2000.0)            # 995s after the close: window expired
+    assert later != "" and later != first
 
 
 def test_current_reflects_open_session() -> None:
@@ -175,12 +182,14 @@ def test_stray_click_after_end_does_not_steal_the_verdict() -> None:
     run = s.begin(1000.0)
     s.observe(1010.0)
     s.end(1200.0)
-    phantom = s.observe(1215.0)             # the tab-focus click
-    assert phantom != run                    # the click itself is new browsing…
-    assert s.last_session(at=1220.0) == run  # …but the verdict binds the closed run
+    assert s.observe(1215.0) == ""           # tab-focus click: marking noise
+    assert s.last_session(at=1220.0) == run  # the verdict binds the closed run
     # batch marking: another tab click + mark still binds the ended run
-    s.observe(1230.0)
+    assert s.observe(1230.0) == ""
     assert s.last_session(at=1235.0) == run
+    # double-end during marking is a no-op — the anchor is not hijacked
+    s.end(1240.0)
+    assert s.last_session(at=1250.0) == run
 
 
 def test_begin_clears_the_ended_preference() -> None:
@@ -221,17 +230,22 @@ def test_snapshot_rehydrate_is_lossless() -> None:
     run_a = s.begin(1000.0)
     s.observe(1010.0)
     s.end(1200.0)                    # deliberate close (grace anchor)
-    phantom = s.observe(1215.0)      # mandatory tab-focus click → implicit run B
+    assert s.observe(1215.0) == ""   # tab-focus click: marking noise
 
     s2 = Sessionizer(idle_gap_seconds=900)
     s2.rehydrate(**s.snapshot())
     # gate scenario 1: verdict after restart still binds the CLOSED run A…
     assert s2.last_session(at=1220.0) == run_a
-    # …while browsing continues in the implicit run B, unsplit.
-    assert s2.observe(1300.0) == phantom
+    # …and marking noise stays noise after the restart too.
+    assert s2.observe(1300.0) == ""
     # seq continuity: a new run after rehydration cannot collide with old ids.
-    s2.end(1400.0)
-    assert s2.begin(1400.0) not in {run_a, phantom}
+    run_b = s2.begin(1400.0)
+    assert run_b not in {run_a, ""}
+    # interval labeling survives the roundtrip: a dwell mostly predating B
+    # still labels A (midpoint rule needs prev/current_opened in the snapshot).
+    s3 = Sessionizer(idle_gap_seconds=900)
+    s3.rehydrate(**s2.snapshot())
+    assert s3.observe_span(1210.0, 1410.0) == run_a
 
 
 def test_snapshot_preserves_the_live_clock_not_row_timestamps() -> None:
@@ -246,3 +260,33 @@ def test_snapshot_preserves_the_live_clock_not_row_timestamps() -> None:
     assert s2.observe(44_130.0) == run        # click 12:15:30: 325s real gap → same run
     # follow-up continuation dwell stays attributed after restart, too
     assert s2.observe_span(44_110.0, 44_400.0) == run
+
+
+def test_bind_outcome_slides_the_marking_window() -> None:
+    # WHY (gate round 6): a 20-min batch of 40 marks must not flip binding
+    # mid-batch — each verdict on the ended run keeps the marking window
+    # alive (sliding), while true abandonment still expires it.
+    s = Sessionizer(idle_gap_seconds=900)
+    run = s.begin(1000.0)
+    s.observe(1010.0)
+    s.end(1200.0)
+    assert s.bind_outcome(at=2000.0) == run   # 800s after close: binds + slides
+    assert s.bind_outcome(at=2800.0) == run   # 800s after the slide: still binds
+    assert s.bind_outcome(at=3800.0) == ""    # 1000s after last mark: expired
+
+
+def test_begin_from_chrome_dwell_labels_the_previous_run() -> None:
+    # WHY (gate round 6, high): dwells close on the NEXT 2s poll tick, so the
+    # begin control systematically precedes the previous run's final reading
+    # dwell. A span whose midpoint predates the new run's open belongs to the
+    # PREDECESSOR — and must not advance the new run's clock.
+    s = Sessionizer(idle_gap_seconds=900)
+    run_a = s.observe(1000.0)
+    s.observe(1500.0)
+    run_b = s.begin(1995.0)
+    assert s.observe_span(1500.0, 1996.0) == run_a   # 99.8% pre-begin → A
+    # B's clock was not advanced by A's dwell: a click 899s after BEGIN stays
+    # in B, one 901s after begin splits — measured from 1995, not 1996.
+    assert s.observe(2894.0) == run_b
+    # a dwell genuinely inside B labels B
+    assert s.observe_span(2000.0, 2894.0) == run_b
