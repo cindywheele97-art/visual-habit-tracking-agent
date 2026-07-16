@@ -40,6 +40,7 @@ def make_config(tmp_path: Path) -> Config:
                 "playbook": str(playbook),
                 "feedback_log": str(tmp_path / "feedback.jsonl"),
                 "knowledge_dir": str(tmp_path / "knowledge"),
+                "behavior_db": str(tmp_path / "behavior.sqlite3"),
             },
             "tracker": {"settle_ms": 30},
             "memory": {"enabled": False},
@@ -146,6 +147,44 @@ CLICK_LINE = (
     '{"type":"click","ts":"2026-06-12T09:00:00Z","app":"com.google.Chrome",'
     '"x":12.0,"y":34.0,"blocks":[{"text":"Adidas Ultraboost","x0":0.1,"x1":0.5,"conf":0.9}]}\n'
 )
+
+
+async def test_click_lands_in_behavior_store_with_raw_join_keys(tmp_path: Path) -> None:
+    # WHY (audit §三 B1/S2 + 隐私冻结): a click carrying a product-ID digit run
+    # must land BOTH queryable (SQLite) and unredacted (join key preserved,
+    # local-only) — while CS observation events stay redacted in the same log.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        click = (
+            '{"type":"click","ts":"2026-07-16T09:00:00Z","app":"com.google.Chrome",'
+            '"x":12.0,"y":34.0,"blocks":[{"text":"商品6212345678901234","x0":0.1,"x1":0.5,"conf":0.9}]}\n'
+        )
+        writer.write(click.encode())
+        await writer.drain()
+        # hello→status roundtrip guarantees the click was dispatched first.
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert len(rows) == 1
+        payload = json.loads(rows[0]["payload"])
+        assert "商品6212345678901234" in payload["texts"]  # raw join key
+        store.close()
+
+        log_text = Path(cfg.brain.event_log).read_text(encoding="utf-8")
+        click_line = next(ln for ln in log_text.splitlines() if '"click"' in ln)
+        assert "6212345678901234" in click_line  # habit passthrough on disk too
+        writer.close()
+    finally:
+        task.cancel()
 
 
 async def test_copied_message_logged(tmp_path: Path) -> None:

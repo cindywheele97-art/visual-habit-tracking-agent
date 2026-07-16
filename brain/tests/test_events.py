@@ -39,16 +39,59 @@ def test_append_survives_unwritable_path(tmp_path: Path) -> None:
     log.append("observation", "r", {"x": 1})
 
 
-def test_rotation_caps_file_size(tmp_path: Path) -> None:
-    # Unbounded events.jsonl would eventually exhaust disk; rotate at a byte cap.
+def test_rotation_archives_generations_never_deletes(tmp_path: Path) -> None:
+    # WHY (audit §三 S1): the flywheel is longitudinal — CTR/GMV outcomes arrive
+    # months after the behavior. Rotation must ARCHIVE history (dated files,
+    # collision-safe), never overwrite a previous generation.
+    path = tmp_path / "events.jsonl"
+    log = EventLog(path, Redactor([]), max_bytes=200)
+    for i in range(60):
+        log.append("observation", "r", {"n": i, "pad": "x" * 40})
+    archives = sorted(tmp_path.glob("events-*.jsonl"))
+    assert len(archives) >= 2  # several rotations happened, all generations kept
+    total_lines = sum(
+        len(p.read_text(encoding="utf-8").splitlines()) for p in [*archives, path]
+    )
+    assert total_lines == 60  # nothing was destroyed
+
+
+def test_raw_kinds_bypass_redaction_but_others_do_not(tmp_path: Path) -> None:
+    # WHY (privacy freeze, audit §十): habit events keep entity IDs — the flywheel
+    # join keys — in plaintext (local-only store); CS conversation events keep
+    # full redaction. One log, per-kind policy.
+    log = EventLog(
+        tmp_path / "e.jsonl",
+        Redactor([r"\d{10,}"]),
+        raw_kinds=frozenset({"click"}),
+    )
+    log.append("click", "", {"texts": ["商品6212345678901234"]})
+    log.append("observation", "r", {"inbound": ["订单6212345678901234"]})
+    lines = (tmp_path / "e.jsonl").read_text(encoding="utf-8").splitlines()
+    assert "6212345678901234" in lines[0]  # habit event: raw join key preserved
+    assert "6212345678901234" not in lines[1]  # CS event: still masked
+
+
+def test_envelope_carries_schema_version(tmp_path: Path) -> None:
+    # WHY: longitudinal data outlives refactors; rows must say what dialect they are.
+    import json
+
+    log = EventLog(tmp_path / "e.jsonl", Redactor([]))
+    log.append("click", "", {})
+    rec = json.loads((tmp_path / "e.jsonl").read_text(encoding="utf-8"))
+    assert rec["v"] == 1
+
+
+def test_rotation_caps_live_file_size(tmp_path: Path) -> None:
+    # The LIVE file stays bounded (rotation trigger works); history moves to
+    # dated archives instead of being overwritten.
     path = tmp_path / "events.jsonl"
     log = EventLog(path, Redactor([]), max_bytes=200)
     for i in range(20):
         log.append("observation", "r", {"n": i, "pad": "x" * 40})
-    rotated = path.with_suffix(".jsonl.1")
-    assert rotated.exists()
-    assert rotated.stat().st_size > 200  # archived tail exceeded the cap
+    assert path.stat().st_size < 400  # cap + at most one record of slack
+    assert len(list(tmp_path.glob("events-*.jsonl"))) >= 1
     log.append("after-rotate", "r", {"marker": True})
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert any("after-rotate" in line for line in lines)
-    assert rotated.stat().st_size > 200
+    assert any(
+        "after-rotate" in line
+        for line in path.read_text(encoding="utf-8").splitlines()
+    )
