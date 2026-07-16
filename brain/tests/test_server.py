@@ -473,6 +473,63 @@ async def test_restart_in_grace_window_keeps_deliberate_close_wins(tmp_path: Pat
         task2.cancel()
 
 
+async def test_restart_preserves_predecessor_dwell_labeling(tmp_path: Path) -> None:
+    # WHY (gate round 7, high): the server's rehydrate call dropped
+    # current_opened/prev_id (rehydrate's optional defaults silently absorbed
+    # the omission), so after ANY mid-run restart the predecessor-span rule was
+    # dead: run A's final reading dwell — which systematically trails the
+    # begin-B control by one poll tick — got labeled into fresh run B, and B's
+    # clock advanced to the dwell's end. This pins the full 8-field roundtrip
+    # through the real server rehydration path (no injected sessionizer).
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server1 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task1 = asyncio.create_task(server1.run())
+    await asyncio.sleep(0.05)
+    reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+    writer.write(
+        b'{"type":"selection_control","ts":"2026-07-16T09:00:00Z","action":"start"}\n'
+    )
+    writer.write(_click("2026-07-16T09:10:00Z"))  # run A browsing
+    writer.write(
+        b'{"type":"selection_control","ts":"2026-07-16T09:30:00Z","action":"start"}\n'
+    )  # begin run B — A's final dwell is still in flight
+    await writer.drain()
+    await _drain_dispatch(reader, writer)
+    writer.close()
+    task1.cancel()  # restart between the begin and the trailing dwell
+    await asyncio.sleep(0.05)
+
+    server2 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task2 = asyncio.create_task(server2.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        # A's reading dwell [09:20, 09:31]: midpoint 09:25:30 < B's open 09:30.
+        writer.write(
+            b'{"type":"dwell","app":"com.google.Chrome","start_ts":"2026-07-16T09:20:00Z",'
+            b'"end_ts":"2026-07-16T09:31:00Z","seconds":660.0}\n'
+        )
+        # 09:45:01 is 901s after B opened: with B's clock untouched by A's
+        # dwell this click MUST split into a new run.
+        writer.write(_click("2026-07-16T09:45:01Z"))
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        run_a = store.query(kind="click")[0]["session_id"]
+        dwell_sid = store.query(kind="dwell")[0]["session_id"]
+        assert dwell_sid == run_a  # predecessor rule survives the restart
+        controls = store.query(kind="selection_control")
+        run_b = controls[1]["session_id"]
+        late_click = store.query(kind="click")[1]["session_id"]
+        assert late_click not in {run_a, run_b, ""}  # split preserved too
+        store.close()
+        writer.close()
+    finally:
+        task2.cancel()
+
+
 async def test_restart_after_long_dwell_does_not_split_the_run(tmp_path: Path) -> None:
     # WHY (merge gate, high): a reading dwell advances the live clock to its
     # END; rehydrating from the dwell row's start_ts rewound the clock by the

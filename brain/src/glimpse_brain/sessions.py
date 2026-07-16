@@ -147,16 +147,19 @@ class Sessionizer:
         self,
         *,
         current: str | None,
+        current_opened: float | None,
+        prev_id: str,
         last_id: str,
         last_ts: float | None,
         ended_id: str | None,
         ended_ts: float | None,
         seq: int,
-        current_opened: float | None = None,
-        prev_id: str = "",
     ) -> None:
         """Restore a snapshot() verbatim after a brain restart. Call before
-        any observe."""
+        any observe. EVERY field is required — optional defaults silently
+        absorbed a missing field at the server call site once (gate round 7:
+        current_opened/prev_id dropped → the predecessor-span rule was dead
+        after every restart). A new snapshot field must break call sites."""
         self._current = current
         self._current_opened = current_opened
         self._prev_id = prev_id

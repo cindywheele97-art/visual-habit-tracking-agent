@@ -149,12 +149,15 @@ class GlimpseServer:
             state = self._store.load_session_state()
             if state is not None:
                 cur = state.get("current")
+                copened = state.get("current_opened")
                 lts = state.get("last_ts")
                 eid = state.get("ended_id")
                 ets = state.get("ended_ts")
                 seq = state.get("seq")
                 self._sessions.rehydrate(
                     current=cur if isinstance(cur, str) else None,
+                    current_opened=copened if isinstance(copened, (int, float)) else None,
+                    prev_id=str(state.get("prev_id") or ""),
                     last_id=str(state.get("last_id") or ""),
                     last_ts=lts if isinstance(lts, (int, float)) else None,
                     ended_id=eid if isinstance(eid, str) else None,
