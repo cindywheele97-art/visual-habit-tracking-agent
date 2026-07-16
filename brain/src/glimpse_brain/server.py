@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -24,6 +25,8 @@ from glimpse_brain.protocol import (
     OutboundMsg,
     ProtocolError,
     RepliedMsg,
+    SelectionControlMsg,
+    SelectionOutcomeMsg,
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
@@ -36,6 +39,7 @@ from glimpse_brain.feedback import FeedbackLog, FeedbackRecord
 from glimpse_brain.memory import Memory
 from glimpse_brain.satisfaction import SatisfactionTracker
 from glimpse_brain.redaction import Redactor
+from glimpse_brain.sessions import Sessionizer
 from glimpse_brain.settle import SettleGate
 from glimpse_brain.store import BehaviorStore
 from glimpse_brain.agent import Agent
@@ -58,7 +62,18 @@ IPC_LINE_LIMIT = 2**21  # 2 MiB
 # Habit-event kinds bypass redaction on the local substrates (audit §十, privacy
 # freeze): their digit runs are the flywheel's join keys and never leave this
 # machine. CS/conversation kinds stay fully redacted.
-HABIT_KINDS = frozenset({"click", "dwell"})
+HABIT_KINDS = frozenset(
+    {"click", "dwell", "selection_control", "selection_outcome"}
+)
+
+
+def _epoch(ts: str) -> float:
+    """ISO8601 → epoch seconds for the Sessionizer. A malformed ts falls back to
+    wall-clock (a rare error path; a spurious boundary there is harmless)."""
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return time.time()
 
 class _Unset:
     """Sentinel type: distinguishes 'memory omitted → build default' from an
@@ -108,8 +123,10 @@ class GlimpseServer:
         llm: LLMClient | None = None,
         tool_client: ToolUseClient | None = None,
         memory: Memory | None | _Unset = _UNSET,
+        sessionizer: Sessionizer | None = None,
     ) -> None:
         self._cfg = cfg
+        self._sessions = sessionizer if sessionizer is not None else Sessionizer()
         self._redactor = Redactor(cfg.redaction.patterns)
         self._events = EventLog(
             Path(cfg.brain.event_log),
@@ -294,6 +311,7 @@ class GlimpseServer:
                 {"suggestion_id": msg.suggestion_id, "mode": msg.mode},
             )
         elif isinstance(msg, ClickMsg):
+            sid = self._sessions.observe(_epoch(msg.ts))
             texts = [b.text for b in msg.blocks]
             self._events.append(
                 "click",
@@ -307,6 +325,7 @@ class GlimpseServer:
                     "window_title": msg.window_title,
                     "url": msg.url,
                     "capture_ok": msg.capture_ok,
+                    "session_id": sid,
                 },
             )
             self._store.append(
@@ -315,6 +334,7 @@ class GlimpseServer:
                 app=msg.app,
                 window_title=msg.window_title,
                 url=msg.url,
+                session_id=sid,
                 payload={
                     "x": msg.x,
                     "y": msg.y,
@@ -323,6 +343,7 @@ class GlimpseServer:
                 },
             )
         elif isinstance(msg, DwellMsg):
+            sid = self._sessions.observe(_epoch(msg.start_ts))
             interval = {
                 "app": msg.app,
                 "window_title": msg.window_title,
@@ -330,6 +351,7 @@ class GlimpseServer:
                 "start_ts": msg.start_ts,
                 "end_ts": msg.end_ts,
                 "seconds": msg.seconds,
+                "session_id": sid,
             }
             self._events.append("dwell", "", dict(interval))
             self._store.append(
@@ -338,10 +360,56 @@ class GlimpseServer:
                 app=msg.app,
                 window_title=msg.window_title,
                 url=msg.url,
+                session_id=sid,
                 payload={
                     "start_ts": msg.start_ts,
                     "end_ts": msg.end_ts,
                     "seconds": msg.seconds,
+                },
+            )
+        elif isinstance(msg, SelectionControlMsg):
+            # Ground-truth trajectory boundary. `start` forces a fresh session;
+            # `end` closes the current one (its id is recorded before closing so
+            # the boundary itself is attributable).
+            if msg.action == "start":
+                sid = self._sessions.begin(_epoch(msg.ts))
+            else:
+                sid = self._sessions.current()
+                self._sessions.end()
+            self._events.append(
+                "selection_control",
+                "",
+                {"action": msg.action, "session_id": sid, "ts": msg.ts},
+            )
+            self._store.append(
+                kind="selection_control",
+                ts=msg.ts,
+                session_id=sid,
+                payload={"action": msg.action},
+            )
+        elif isinstance(msg, SelectionOutcomeMsg):
+            # The flywheel's target variable, attached to the ACTIVE session
+            # (current() — an outcome does not open or extend a trajectory).
+            sid = self._sessions.current()
+            self._events.append(
+                "selection_outcome",
+                "",
+                {
+                    "session_id": sid,
+                    "product_key": msg.product_key,
+                    "verdict": msg.verdict,
+                    "note": msg.note,
+                    "ts": msg.ts,
+                },
+            )
+            self._store.append(
+                kind="selection_outcome",
+                ts=msg.ts,
+                session_id=sid,
+                payload={
+                    "product_key": msg.product_key,
+                    "verdict": msg.verdict,
+                    "note": msg.note,
                 },
             )
         elif isinstance(msg, FeedbackMsg):

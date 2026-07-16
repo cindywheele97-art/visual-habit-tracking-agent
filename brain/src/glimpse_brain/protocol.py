@@ -93,6 +93,29 @@ class FeedbackMsg(BaseModel):
     note: str = ""  # free-text correction; meaningful with "down"
 
 
+class SelectionControlMsg(BaseModel):
+    """Operator's 开始/结束选品 control — ground-truth trajectory boundary
+    (audit §三 B3). session_id is derived by the brain's Sessionizer."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["selection_control"] = "selection_control"
+    ts: str
+    action: Literal["start", "end"]
+
+
+class SelectionOutcomeMsg(BaseModel):
+    """The final selection result for the active trajectory (audit §三 B4) — the
+    flywheel's target variable. `note` is the cheap human-in-the-loop moment
+    where the implicit WHY gets captured."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["selection_outcome"] = "selection_outcome"
+    ts: str
+    product_key: str = ""  # front window title / operator-provided join key; "" allowed
+    verdict: Literal["selected", "rejected", "shortlisted"]
+    note: str = ""
+
+
 class SummarizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["summarize"] = "summarize"
@@ -143,6 +166,8 @@ InboundMsg = (
     | CopiedMsg
     | ClickMsg
     | DwellMsg
+    | SelectionControlMsg
+    | SelectionOutcomeMsg
     | SummarizeRequest
     | RepliedMsg
     | FeedbackMsg

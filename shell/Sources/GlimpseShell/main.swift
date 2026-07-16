@@ -63,6 +63,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         autoSendItem.state = autoSendEnabled ? .on : .off
         menu.addItem(autoSendItem)
         menu.addItem(.separator())
+        // 选品 trajectory controls (P7.3): explicit ground-truth boundaries +
+        // the outcome label that closes the flywheel's first loop.
+        menu.addItem(NSMenuItem(title: "开始选品", action: #selector(startSelection), keyEquivalent: "["))
+        menu.addItem(NSMenuItem(title: "结束选品", action: #selector(endSelection), keyEquivalent: "]"))
+        menu.addItem(NSMenuItem(title: "标记选中", action: #selector(markSelected), keyEquivalent: "1"))
+        menu.addItem(NSMenuItem(title: "标记入围", action: #selector(markShortlisted), keyEquivalent: "2"))
+        menu.addItem(NSMenuItem(title: "标记淘汰", action: #selector(markRejected), keyEquivalent: "3"))
+        menu.addItem(.separator())
         menu.addItem(
             NSMenuItem(title: "Quit Glimpse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         )
@@ -189,6 +197,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func summarize() {
         ipc.send(SummarizeRequest())
     }
+
+    // MARK: - 选品 trajectory controls (P7.3)
+
+    private func nowTs() -> String { isoFormatter.string(from: Date()) }
+
+    @objc private func startSelection() {
+        ipc.send(SelectionControlMsg(ts: nowTs(), action: "start"))
+        overlay.setStatus("watching", detail: "已开始选品")
+    }
+
+    @objc private func endSelection() {
+        ipc.send(SelectionControlMsg(ts: nowTs(), action: "end"))
+        overlay.setStatus("watching", detail: "已结束选品")
+    }
+
+    private func markOutcome(_ verdict: String, _ label: String) {
+        // product_key = the frontmost window's title (best-effort join context —
+        // the product page the operator just decided on); the WHY (note) is
+        // deferred to a later text-entry affordance.
+        let title = NSWorkspace.shared.frontmostApplication
+            .map { AttentionSensor.frontWindowTitle(pid: $0.processIdentifier) } ?? ""
+        ipc.send(SelectionOutcomeMsg(ts: nowTs(), productKey: title, verdict: verdict))
+        overlay.setStatus("watching", detail: label)
+    }
+
+    @objc private func markSelected() { markOutcome("selected", "已标记选中") }
+    @objc private func markShortlisted() { markOutcome("shortlisted", "已标记入围") }
+    @objc private func markRejected() { markOutcome("rejected", "已标记淘汰") }
 
     @objc private func selectRegion() {
         selector = RegionSelector { [weak self] region in

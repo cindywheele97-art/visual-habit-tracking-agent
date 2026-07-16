@@ -146,8 +146,9 @@ public final class AttentionSensor {
 
     /// Title of the app's frontmost layer-0 window (same-process CGWindowList
     /// scan — no cross-process IPC; window names readable via the existing
-    /// screen-recording permission).
-    static func frontWindowTitle(pid: pid_t) -> String {
+    /// screen-recording permission). Also the best-effort product_key for a
+    /// 选品 outcome (P7.3).
+    public static func frontWindowTitle(pid: pid_t) -> String {
         let info =
             CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
             as? [[String: Any]] ?? []

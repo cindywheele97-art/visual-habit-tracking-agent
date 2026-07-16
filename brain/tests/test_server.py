@@ -187,6 +187,147 @@ async def test_click_lands_in_behavior_store_with_raw_join_keys(tmp_path: Path) 
         task.cancel()
 
 
+def _click(ts: str, text: str = "Adidas") -> bytes:
+    return (
+        '{"type":"click","ts":"%s","app":"com.google.Chrome","x":1.0,"y":2.0,'
+        '"blocks":[{"text":"%s","x0":0.1,"x1":0.5,"conf":0.9}]}\n' % (ts, text)
+    ).encode()
+
+
+async def _drain_dispatch(reader: Any, writer: Any) -> None:
+    # hello→status roundtrip proves every prior line was dispatched first.
+    writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+    await writer.drain()
+    await read_until(reader, "status")
+
+
+async def test_clicks_within_gap_share_a_session_id(tmp_path: Path) -> None:
+    # WHY (audit §三 B3): the flywheel's atomic record is the trajectory — every
+    # behavior event must carry a session_id, and clicks in one run share it.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(_click("2026-07-16T09:00:00Z"))
+        writer.write(_click("2026-07-16T09:00:30Z"))  # 30s < 900s gap
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert len(rows) == 2
+        assert rows[0]["session_id"] != ""
+        assert rows[0]["session_id"] == rows[1]["session_id"]
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_idle_gap_splits_sessions(tmp_path: Path) -> None:
+    # WHY: a long inactivity gap is a different 选品 run — pure-code segmentation.
+    from glimpse_brain.sessions import Sessionizer
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(
+        cfg, llm=FakeLLM(), tool_client=FakeToolClient(),
+        sessionizer=Sessionizer(idle_gap_seconds=1),
+    )
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(_click("2026-07-16T09:00:00Z"))
+        writer.write(_click("2026-07-16T09:00:05Z"))  # 5s > 1s gap → new run
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert rows[0]["session_id"] != rows[1]["session_id"]
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_selection_start_click_outcome_share_session_and_survive_redaction(
+    tmp_path: Path,
+) -> None:
+    # WHY (audit §三 B4): the outcome is the flywheel's TARGET variable — it must
+    # bind to the active trajectory's session, and its product_key/note (which
+    # carry join-key digits + the implicit WHY) must NOT be redacted.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(
+            b'{"type":"selection_control","ts":"2026-07-16T09:00:00Z","action":"start"}\n'
+        )
+        writer.write(_click("2026-07-16T09:00:10Z"))
+        writer.write(
+            '{"type":"selection_outcome","ts":"2026-07-16T09:05:00Z",'
+            '"product_key":"商品6212345678901234","verdict":"selected",'
+            '"note":"利润高 对标账号12345爆过"}\n'.encode()
+        )
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        click_sid = store.query(kind="click")[0]["session_id"]
+        outcomes = store.query(kind="selection_outcome")
+        assert len(outcomes) == 1
+        assert outcomes[0]["session_id"] == click_sid  # bound to the same run
+        payload = json.loads(outcomes[0]["payload"])
+        assert payload["verdict"] == "selected"
+        assert payload["product_key"] == "商品6212345678901234"  # join key intact
+        store.close()
+
+        log_text = Path(cfg.brain.event_log).read_text(encoding="utf-8")
+        outcome_line = next(
+            ln for ln in log_text.splitlines() if '"selection_outcome"' in ln
+        )
+        assert "6212345678901234" in outcome_line  # habit passthrough on disk
+        assert "对标账号12345" in outcome_line       # the WHY survives too
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
+    # WHY: '结束选品' is a ground-truth boundary — the next click is a new run
+    # even within the idle gap.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(_click("2026-07-16T09:00:00Z"))
+        writer.write(
+            b'{"type":"selection_control","ts":"2026-07-16T09:00:05Z","action":"end"}\n'
+        )
+        writer.write(_click("2026-07-16T09:00:10Z"))  # within gap, but after end
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert rows[0]["session_id"] != rows[1]["session_id"]
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
 async def test_click_join_key_fields_flow_to_store(tmp_path: Path) -> None:
     # WHY (audit §三 B1): window title + URL are the flywheel's JOIN keys —
     # they must survive the wire and land in queryable columns. capture_ok

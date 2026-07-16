@@ -6,6 +6,25 @@ import Testing
 // WHY: field names on the wire must match the Python brain exactly
 // (snake_case). A silent mismatch breaks the whole pipeline.
 @Test
+func selectionMsgsEncodeSnakeCaseMatchingBrain() throws {
+    // Brain's SelectionControlMsg / SelectionOutcomeMsg use these exact keys.
+    let control = String(
+        data: try Wire.encodeLine(SelectionControlMsg(ts: "t", action: "start")),
+        encoding: .utf8)!
+    #expect(control.contains("\"type\":\"selection_control\""))
+    #expect(control.contains("\"action\":\"start\""))
+
+    let outcome = String(
+        data: try Wire.encodeLine(
+            SelectionOutcomeMsg(ts: "t", productKey: "商品612", verdict: "selected", note: "利润高")),
+        encoding: .utf8)!
+    #expect(outcome.contains("\"type\":\"selection_outcome\""))
+    #expect(outcome.contains("\"product_key\":\"商品612\""))
+    #expect(outcome.contains("\"verdict\":\"selected\""))
+    #expect(outcome.contains("\"note\":\"利润高\""))
+}
+
+@Test
 func ocrMsgEncodesSnakeCase() throws {
     let msg = OcrMsg(
         seq: 1, ts: "2026-06-11T12:00:00Z", regionId: "region-1",
