@@ -28,7 +28,10 @@ public enum OCR {
                     text: candidate.string,
                     x0: max(0.0, min(1.0, observation.boundingBox.minX)),
                     x1: max(0.0, min(1.0, observation.boundingBox.maxX)),
-                    conf: Double(candidate.confidence)
+                    conf: Double(candidate.confidence),
+                    // Vision's origin is bottom-left; the wire uses top-left.
+                    y0: max(0.0, min(1.0, 1.0 - observation.boundingBox.maxY)),
+                    y1: max(0.0, min(1.0, 1.0 - observation.boundingBox.minY))
                 )
             }
     }

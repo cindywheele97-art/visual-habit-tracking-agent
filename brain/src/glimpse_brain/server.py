@@ -17,6 +17,7 @@ from glimpse_brain.protocol import (
     AdvisoryMsg,
     ClickMsg,
     CopiedMsg,
+    DwellMsg,
     FeedbackMsg,
     HelloMsg,
     OcrMsg,
@@ -303,13 +304,45 @@ class GlimpseServer:
                     "y": msg.y,
                     "ts": msg.ts,
                     "texts": texts,
+                    "window_title": msg.window_title,
+                    "url": msg.url,
+                    "capture_ok": msg.capture_ok,
                 },
             )
             self._store.append(
                 kind="click",
                 ts=msg.ts,
                 app=msg.app,
-                payload={"x": msg.x, "y": msg.y, "texts": texts},
+                window_title=msg.window_title,
+                url=msg.url,
+                payload={
+                    "x": msg.x,
+                    "y": msg.y,
+                    "texts": texts,
+                    "capture_ok": msg.capture_ok,
+                },
+            )
+        elif isinstance(msg, DwellMsg):
+            interval = {
+                "app": msg.app,
+                "window_title": msg.window_title,
+                "url": msg.url,
+                "start_ts": msg.start_ts,
+                "end_ts": msg.end_ts,
+                "seconds": msg.seconds,
+            }
+            self._events.append("dwell", "", dict(interval))
+            self._store.append(
+                kind="dwell",
+                ts=msg.start_ts,
+                app=msg.app,
+                window_title=msg.window_title,
+                url=msg.url,
+                payload={
+                    "start_ts": msg.start_ts,
+                    "end_ts": msg.end_ts,
+                    "seconds": msg.seconds,
+                },
             )
         elif isinstance(msg, FeedbackMsg):
             await self._on_feedback(msg)

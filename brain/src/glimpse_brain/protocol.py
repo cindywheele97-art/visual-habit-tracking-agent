@@ -12,13 +12,16 @@ class ProtocolError(ValueError):
 
 
 class Block(BaseModel):
-    """One OCR text block; x0/x1 are normalized [0,1] within the region."""
+    """One OCR text block; x0/x1 (and y0/y1, top-left origin) are normalized
+    [0,1] within the region. y defaults exist for pre-P7.2 shells."""
 
     model_config = ConfigDict(extra="forbid")
     text: str
     x0: float = Field(ge=0.0, le=1.0)
     x1: float = Field(ge=0.0, le=1.0)
     conf: float = Field(ge=0.0, le=1.0)
+    y0: float = Field(default=0.0, ge=0.0, le=1.0)
+    y1: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class OcrMsg(BaseModel):
@@ -53,6 +56,24 @@ class ClickMsg(BaseModel):
     x: float
     y: float
     blocks: list[Block]
+    window_title: str = ""  # clicked window's title — flywheel join-key context
+    url: str = ""  # focused browser document URL (best-effort AX read)
+    # False = metadata-only click (burst coalescing or snapshot/OCR failure):
+    # the click FACT always survives even when its screenshot doesn't.
+    capture_ok: bool = True
+
+
+class DwellMsg(BaseModel):
+    """A closed attention interval on one window/page (audit §三 B2)."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["dwell"] = "dwell"
+    app: str
+    window_title: str = ""
+    url: str = ""
+    start_ts: str
+    end_ts: str
+    seconds: float = Field(ge=0.0)
 
 
 class RepliedMsg(BaseModel):
@@ -116,7 +137,16 @@ class AdvisoryMsg(BaseModel):
     text: str
 
 
-InboundMsg = OcrMsg | HelloMsg | CopiedMsg | ClickMsg | SummarizeRequest | RepliedMsg | FeedbackMsg
+InboundMsg = (
+    OcrMsg
+    | HelloMsg
+    | CopiedMsg
+    | ClickMsg
+    | DwellMsg
+    | SummarizeRequest
+    | RepliedMsg
+    | FeedbackMsg
+)
 OutboundMsg = AckMsg | SuggestionsMsg | StatusMsg | SummaryMsg | AdvisoryMsg
 
 _INBOUND: TypeAdapter[InboundMsg] = TypeAdapter(

@@ -19,6 +19,43 @@ func ocrMsgEncodesSnakeCase() throws {
 }
 
 @Test
+func clickMsgEncodesJoinKeyFieldsSnakeCase() throws {
+    // WHY: window_title/url are the flywheel's JOIN keys and capture_ok is the
+    // metadata-only marker — a key-name mismatch silently drops them at the
+    // brain's extra="forbid" boundary.
+    let msg = ClickMsg(
+        ts: "t", app: "com.google.Chrome", x: 1, y: 2,
+        blocks: [Block(text: "连衣裙", x0: 0.1, x1: 0.5, conf: 0.9, y0: 0.2, y1: 0.3)],
+        windowTitle: "连衣裙批发 - 1688",
+        url: "https://detail.1688.com/offer/612345678901.html",
+        captureOk: false
+    )
+    let json = String(data: try Wire.encodeLine(msg), encoding: .utf8)!
+    #expect(json.contains("\"window_title\":\"连衣裙批发 - 1688\""))
+    // JSONEncoder escapes "/" as "\/" (legal JSON; the Python side decodes it
+    // back) — assert on the key and an unescapable fragment, not raw slashes.
+    #expect(json.contains("\"url\":"))
+    #expect(json.contains("612345678901.html"))
+    #expect(json.contains("\"capture_ok\":false"))
+    #expect(json.contains("\"y0\":0.2"))
+    #expect(json.contains("\"y1\":0.3"))
+}
+
+@Test
+func dwellMsgEncodesSnakeCase() throws {
+    let msg = DwellMsg(
+        app: "com.apple.Safari", windowTitle: "淘宝", url: "https://item.taobao.com/item.htm?id=9",
+        startTs: "2026-07-16T09:00:00Z", endTs: "2026-07-16T09:01:30Z", seconds: 90
+    )
+    let json = String(data: try Wire.encodeLine(msg), encoding: .utf8)!
+    #expect(json.contains("\"type\":\"dwell\""))
+    #expect(json.contains("\"start_ts\":\"2026-07-16T09:00:00Z\""))
+    #expect(json.contains("\"end_ts\":\"2026-07-16T09:01:30Z\""))
+    #expect(json.contains("\"seconds\":90"))
+    #expect(json.contains("\"window_title\":\"淘宝\""))
+}
+
+@Test
 func decodeSuggestionsFromBrain() throws {
     let line = #"{"type":"suggestions","region_id":"region-1","items":[{"id":"s1","text":"好的"}],"stale":false}"#
     guard case .suggestions(let msg)? = Wire.decodeBrainMessage(Data(line.utf8)) else {
