@@ -40,6 +40,7 @@ def make_config(tmp_path: Path) -> Config:
                 "playbook": str(playbook),
                 "feedback_log": str(tmp_path / "feedback.jsonl"),
                 "knowledge_dir": str(tmp_path / "knowledge"),
+                "behavior_db": str(tmp_path / "behavior.sqlite3"),
             },
             "tracker": {"settle_ms": 30},
             "memory": {"enabled": False},
@@ -146,6 +147,118 @@ CLICK_LINE = (
     '{"type":"click","ts":"2026-06-12T09:00:00Z","app":"com.google.Chrome",'
     '"x":12.0,"y":34.0,"blocks":[{"text":"Adidas Ultraboost","x0":0.1,"x1":0.5,"conf":0.9}]}\n'
 )
+
+
+async def test_click_lands_in_behavior_store_with_raw_join_keys(tmp_path: Path) -> None:
+    # WHY (audit §三 B1/S2 + 隐私冻结): a click carrying a product-ID digit run
+    # must land BOTH queryable (SQLite) and unredacted (join key preserved,
+    # local-only) — while CS observation events stay redacted in the same log.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        click = (
+            '{"type":"click","ts":"2026-07-16T09:00:00Z","app":"com.google.Chrome",'
+            '"x":12.0,"y":34.0,"blocks":[{"text":"商品6212345678901234","x0":0.1,"x1":0.5,"conf":0.9}]}\n'
+        )
+        writer.write(click.encode())
+        await writer.drain()
+        # hello→status roundtrip guarantees the click was dispatched first.
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert len(rows) == 1
+        payload = json.loads(rows[0]["payload"])
+        assert "商品6212345678901234" in payload["texts"]  # raw join key
+        store.close()
+
+        log_text = Path(cfg.brain.event_log).read_text(encoding="utf-8")
+        click_line = next(ln for ln in log_text.splitlines() if '"click"' in ln)
+        assert "6212345678901234" in click_line  # habit passthrough on disk too
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_click_join_key_fields_flow_to_store(tmp_path: Path) -> None:
+    # WHY (audit §三 B1): window title + URL are the flywheel's JOIN keys —
+    # they must survive the wire and land in queryable columns. capture_ok
+    # marks metadata-only clicks (burst/OCR failure) so analytics can tell
+    # "no text captured" from "no text on screen".
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        click = (
+            '{"type":"click","ts":"2026-07-16T09:00:00Z","app":"com.google.Chrome",'
+            '"x":12.0,"y":34.0,"blocks":[],"window_title":"连衣裙批发 - 1688",'
+            '"url":"https://detail.1688.com/offer/612345678901.html","capture_ok":false}\n'
+        )
+        writer.write(click.encode())
+        await writer.drain()
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="click")
+        assert len(rows) == 1
+        assert rows[0]["window_title"] == "连衣裙批发 - 1688"
+        assert rows[0]["url"] == "https://detail.1688.com/offer/612345678901.html"
+        assert json.loads(rows[0]["payload"])["capture_ok"] is False
+        store.close()
+        writer.close()
+    finally:
+        task.cancel()
+
+
+async def test_dwell_event_lands_in_both_stores(tmp_path: Path) -> None:
+    # WHY (audit §三 B2): dwell is the primary implicit-attention signal of
+    # 选品 — the new DwellMsg must persist to the journal AND the analytics
+    # store with its interval intact.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        dwell = (
+            '{"type":"dwell","app":"com.google.Chrome","window_title":"連衣裙 - 淘宝",'
+            '"url":"https://item.taobao.com/item.htm?id=98765432109",'
+            '"start_ts":"2026-07-16T09:00:00Z","end_ts":"2026-07-16T09:01:30Z","seconds":90.0}\n'
+        )
+        writer.write(dwell.encode())
+        await writer.drain()
+        writer.write(b'{"type":"hello","shell_version":"0.1.0"}\n')
+        await writer.drain()
+        await read_until(reader, "status")
+
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        rows = store.query(kind="dwell")
+        assert len(rows) == 1
+        assert rows[0]["url"].endswith("id=98765432109")
+        assert json.loads(rows[0]["payload"])["seconds"] == 90.0
+        store.close()
+
+        log_text = Path(cfg.brain.event_log).read_text(encoding="utf-8")
+        dwell_line = next(ln for ln in log_text.splitlines() if '"dwell"' in ln)
+        assert "98765432109" in dwell_line  # habit passthrough: URL id kept raw
+        writer.close()
+    finally:
+        task.cancel()
 
 
 async def test_copied_message_logged(tmp_path: Path) -> None:

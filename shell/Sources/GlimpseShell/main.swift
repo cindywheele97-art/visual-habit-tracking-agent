@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var ipc: IPCClient!
     private var selector: RegionSelector?
     private var clickSensor: ClickSensor?
+    private var attention: AttentionSensor?
     // Capture-queue-confined: processFrame is the only reader/writer after
     // init. Do not read seq from main without hopping to the capture queue.
     private var seq = 0
@@ -86,6 +87,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sensor.start()
         clickSensor = sensor
+
+        // Dwell sensor (P7.2): closed attention intervals on allowlisted apps
+        // become DwellMsg events — the flywheel's primary implicit-attention
+        // signal. onDwell fires on the main run loop (Timer).
+        let dwellSensor = AttentionSensor(
+            allowlist: AppAllowlist(path: AppAllowlist.defaultPath)
+        ) { [weak self] interval in
+            guard let self else { return }
+            self.ipc.send(
+                DwellMsg(
+                    app: interval.app,
+                    windowTitle: interval.title,
+                    url: "",  // P7.4 browser-extension tier fills this
+                    startTs: self.isoFormatter.string(
+                        from: Date(timeIntervalSince1970: interval.start)),
+                    endTs: self.isoFormatter.string(
+                        from: Date(timeIntervalSince1970: interval.end)),
+                    seconds: interval.seconds
+                )
+            )
+        }
+        dwellSensor.start()
+        attention = dwellSensor
 
         overlay.model.onCopy = { [weak self] suggestionId in
             guard let self else { return }

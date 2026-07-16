@@ -4,7 +4,8 @@
 # Shell always connects here (~/.glimpse/glimpse.sock); not configurable on the shell side.
 socket_path = "~/.glimpse/glimpse.sock"
 event_log = "~/.glimpse/events.jsonl"
-# event_log_max_bytes = 52428800  # optional cap before single-generation rotation; default 50 MiB
+# event_log_max_bytes = 52428800  # rotation trigger; generations are ARCHIVED (dated files), never deleted
+# behavior_db = "~/.glimpse/behavior.sqlite3"  # habit-event analytics store (SQLite, local-only, unredacted by design)
 playbook = "~/.glimpse/playbook.md"
 
 [llm]

@@ -17,6 +17,7 @@ from glimpse_brain.protocol import (
     AdvisoryMsg,
     ClickMsg,
     CopiedMsg,
+    DwellMsg,
     FeedbackMsg,
     HelloMsg,
     OcrMsg,
@@ -36,6 +37,7 @@ from glimpse_brain.memory import Memory
 from glimpse_brain.satisfaction import SatisfactionTracker
 from glimpse_brain.redaction import Redactor
 from glimpse_brain.settle import SettleGate
+from glimpse_brain.store import BehaviorStore
 from glimpse_brain.agent import Agent
 from glimpse_brain.knowledge import OkfKnowledgeBase
 from glimpse_brain.llm import AnthropicLLM, LLMClient, RateLimiter
@@ -52,6 +54,11 @@ log = logging.getLogger("glimpse.server")
 # caps it at 512 KB) — far past asyncio's 64 KB default readline() limit, which
 # would kill the connection on the first real frame.
 IPC_LINE_LIMIT = 2**21  # 2 MiB
+
+# Habit-event kinds bypass redaction on the local substrates (audit §十, privacy
+# freeze): their digit runs are the flywheel's join keys and never leave this
+# machine. CS/conversation kinds stay fully redacted.
+HABIT_KINDS = frozenset({"click", "dwell"})
 
 class _Unset:
     """Sentinel type: distinguishes 'memory omitted → build default' from an
@@ -105,8 +112,12 @@ class GlimpseServer:
         self._cfg = cfg
         self._redactor = Redactor(cfg.redaction.patterns)
         self._events = EventLog(
-            Path(cfg.brain.event_log), self._redactor, cfg.brain.event_log_max_bytes
+            Path(cfg.brain.event_log),
+            self._redactor,
+            cfg.brain.event_log_max_bytes,
+            raw_kinds=HABIT_KINDS,
         )
+        self._store = BehaviorStore(Path(cfg.brain.behavior_db))
         # Conversation state is PER customer: the active tracker follows the
         # contact on screen; parked trackers keep their positional anchor,
         # tail, and text dedup so revisits restore context without re-firing.
@@ -283,6 +294,7 @@ class GlimpseServer:
                 {"suggestion_id": msg.suggestion_id, "mode": msg.mode},
             )
         elif isinstance(msg, ClickMsg):
+            texts = [b.text for b in msg.blocks]
             self._events.append(
                 "click",
                 "",
@@ -291,7 +303,45 @@ class GlimpseServer:
                     "x": msg.x,
                     "y": msg.y,
                     "ts": msg.ts,
-                    "texts": [b.text for b in msg.blocks],
+                    "texts": texts,
+                    "window_title": msg.window_title,
+                    "url": msg.url,
+                    "capture_ok": msg.capture_ok,
+                },
+            )
+            self._store.append(
+                kind="click",
+                ts=msg.ts,
+                app=msg.app,
+                window_title=msg.window_title,
+                url=msg.url,
+                payload={
+                    "x": msg.x,
+                    "y": msg.y,
+                    "texts": texts,
+                    "capture_ok": msg.capture_ok,
+                },
+            )
+        elif isinstance(msg, DwellMsg):
+            interval = {
+                "app": msg.app,
+                "window_title": msg.window_title,
+                "url": msg.url,
+                "start_ts": msg.start_ts,
+                "end_ts": msg.end_ts,
+                "seconds": msg.seconds,
+            }
+            self._events.append("dwell", "", dict(interval))
+            self._store.append(
+                kind="dwell",
+                ts=msg.start_ts,
+                app=msg.app,
+                window_title=msg.window_title,
+                url=msg.url,
+                payload={
+                    "start_ts": msg.start_ts,
+                    "end_ts": msg.end_ts,
+                    "seconds": msg.seconds,
                 },
             )
         elif isinstance(msg, FeedbackMsg):

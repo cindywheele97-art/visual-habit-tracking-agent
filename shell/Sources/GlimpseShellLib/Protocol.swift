@@ -7,12 +7,18 @@ public struct Block: Codable, Equatable {
     public var x0: Double
     public var x1: Double
     public var conf: Double
+    // Normalized [0,1], top-left origin. Defaults keep pre-P7.2 call sites
+    // valid; OCR fills real values so click→block mapping is computable.
+    public var y0: Double
+    public var y1: Double
 
-    public init(text: String, x0: Double, x1: Double, conf: Double) {
+    public init(text: String, x0: Double, x1: Double, conf: Double, y0: Double = 0, y1: Double = 0) {
         self.text = text
         self.x0 = x0
         self.x1 = x1
         self.conf = conf
+        self.y0 = y0
+        self.y1 = y1
     }
 }
 
@@ -121,17 +127,61 @@ public struct ClickMsg: Codable {
     public var x: Double
     public var y: Double
     public var blocks: [Block]
+    public var windowTitle: String
+    public var url: String
+    // false = metadata-only click (burst coalescing or snapshot/OCR failure):
+    // the click FACT survives even when its screenshot doesn't.
+    public var captureOk: Bool
 
-    public init(ts: String, app: String, x: Double, y: Double, blocks: [Block]) {
+    public init(
+        ts: String, app: String, x: Double, y: Double, blocks: [Block],
+        windowTitle: String = "", url: String = "", captureOk: Bool = true
+    ) {
         self.ts = ts
         self.app = app
         self.x = x
         self.y = y
         self.blocks = blocks
+        self.windowTitle = windowTitle
+        self.url = url
+        self.captureOk = captureOk
     }
 
     enum CodingKeys: String, CodingKey {
         case type, ts, app, x, y, blocks
+        case windowTitle = "window_title"
+        case url
+        case captureOk = "capture_ok"
+    }
+}
+
+/// A closed attention interval on one window/page — the dwell signal.
+public struct DwellMsg: Codable {
+    public var type = "dwell"
+    public var app: String
+    public var windowTitle: String
+    public var url: String
+    public var startTs: String
+    public var endTs: String
+    public var seconds: Double
+
+    public init(
+        app: String, windowTitle: String = "", url: String = "",
+        startTs: String, endTs: String, seconds: Double
+    ) {
+        self.app = app
+        self.windowTitle = windowTitle
+        self.url = url
+        self.startTs = startTs
+        self.endTs = endTs
+        self.seconds = seconds
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, app, url, seconds
+        case windowTitle = "window_title"
+        case startTs = "start_ts"
+        case endTs = "end_ts"
     }
 }
 

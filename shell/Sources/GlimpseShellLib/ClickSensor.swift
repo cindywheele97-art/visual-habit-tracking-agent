@@ -3,14 +3,19 @@ import CoreGraphics
 import Foundation
 
 /// The window a click landed in and the app that owns it — the unit the
-/// capture allowlist judges.
+/// capture allowlist judges. title/pid feed the flywheel join keys (window
+/// title now, AX URL via pid).
 public struct ClickTarget: Equatable {
     public let bundleId: String
     public let windowId: UInt32
+    public let title: String
+    public let pid: pid_t
 
-    public init(bundleId: String, windowId: UInt32) {
+    public init(bundleId: String, windowId: UInt32, title: String = "", pid: pid_t = 0) {
         self.bundleId = bundleId
         self.windowId = windowId
+        self.title = title
+        self.pid = pid
     }
 }
 
@@ -70,7 +75,7 @@ public final class ClickSensor {
             let hit = firstWindow(at: event.location, in: info),
             let bundleId = NSRunningApplication(processIdentifier: hit.pid)?.bundleIdentifier
         else { return nil }
-        return ClickTarget(bundleId: bundleId, windowId: hit.windowId)
+        return ClickTarget(bundleId: bundleId, windowId: hit.windowId, title: hit.title, pid: hit.pid)
     }
 
     private static func owner(ofWindow windowId: UInt32) -> ClickTarget? {
@@ -80,14 +85,15 @@ public final class ClickSensor {
             let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
             let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
         else { return nil }
-        return ClickTarget(bundleId: bundleId, windowId: windowId)
+        let title = info[kCGWindowName as String] as? String ?? ""
+        return ClickTarget(bundleId: bundleId, windowId: windowId, title: title, pid: pid)
     }
 
     /// Front-to-back hit test (CGWindowList returns windows frontmost first).
     /// Pure — unit-tested with fabricated window lists.
     static func firstWindow(
         at point: CGPoint, in windowInfo: [[String: Any]]
-    ) -> (pid: pid_t, windowId: UInt32)? {
+    ) -> (pid: pid_t, windowId: UInt32, title: String)? {
         for info in windowInfo {
             guard
                 let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
@@ -96,7 +102,7 @@ public final class ClickSensor {
                 let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                 let windowId = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
             else { continue }
-            return (pid, windowId)
+            return (pid, windowId, info[kCGWindowName as String] as? String ?? "")
         }
         return nil
     }
@@ -153,10 +159,6 @@ public final class ClickSensor {
             return
         }
         guard type == .leftMouseDown else { return }
-        // Drop burst clicks: keep one capture in flight at a time. Avoids piling
-        // up concurrent SCK+OCR work and out-of-order onClick delivery. (capturing
-        // is only ever touched on the main thread — here and in the reset below.)
-        guard !capturing else { return }
         guard
             let target = Self.captureDecision(
                 target: resolveTarget(event), allowlist: allowlist
@@ -164,6 +166,29 @@ public final class ClickSensor {
         else { return }
         let point = event.location  // global, top-left origin (matches CG/SCK)
         let ts = iso.string(from: Date())
+        // url stays "" on the native tier: an AX read here would block this
+        // event-tap callback (main run loop) for up to the ~6s AX timeout and
+        // could get the tap disabled, silently losing the very burst clicks the
+        // completeness path below exists to preserve — and Chrome rarely
+        // answers AX anyway. The URL join key is the P7.4 browser extension's
+        // job; window_title (already resolved, no IPC) is the native context.
+        //
+        // The click FACT always survives (audit §三 click-stream completeness):
+        // bursts and failed captures emit a metadata-only record instead of
+        // vanishing — silent, behavior-correlated loss (fast comparison
+        // clicking!) would bias every downstream flywheel metric. One snapshot
+        // in flight at a time is still enforced; extra clicks coalesce to
+        // metadata (capture_ok=false). `capturing` stays main-thread-only.
+        guard !capturing else {
+            onClick(
+                ClickMsg(
+                    ts: ts, app: target.bundleId,
+                    x: Double(point.x), y: Double(point.y), blocks: [],
+                    windowTitle: target.title, url: "", captureOk: false
+                )
+            )
+            return
+        }
         let size = snapshotSize
         capturing = true
         Task { [weak self] in
@@ -172,13 +197,12 @@ public final class ClickSensor {
                 target.windowId, around: point, size: size
             )
             let blocks = image.flatMap { try? OCR.recognize($0) }
-            if let blocks {
-                let msg = ClickMsg(
-                    ts: ts, app: target.bundleId,
-                    x: Double(point.x), y: Double(point.y), blocks: blocks
-                )
-                self.onClick(msg)
-            }
+            let msg = ClickMsg(
+                ts: ts, app: target.bundleId,
+                x: Double(point.x), y: Double(point.y), blocks: blocks ?? [],
+                windowTitle: target.title, url: "", captureOk: blocks != nil
+            )
+            self.onClick(msg)
             await MainActor.run { self.capturing = false }
         }
     }
