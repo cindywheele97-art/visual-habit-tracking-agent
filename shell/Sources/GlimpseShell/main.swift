@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DwellMsg(
                     app: interval.app,
                     windowTitle: interval.title,
-                    url: interval.url,
+                    url: "",  // P7.4 browser-extension tier fills this
                     startTs: self.isoFormatter.string(
                         from: Date(timeIntervalSince1970: interval.start)),
                     endTs: self.isoFormatter.string(

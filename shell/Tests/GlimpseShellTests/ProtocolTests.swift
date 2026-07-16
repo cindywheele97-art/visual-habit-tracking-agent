@@ -23,19 +23,18 @@ func clickMsgEncodesJoinKeyFieldsSnakeCase() throws {
     // WHY: window_title/url are the flywheel's JOIN keys and capture_ok is the
     // metadata-only marker — a key-name mismatch silently drops them at the
     // brain's extra="forbid" boundary.
+    // url is populated by the P7.4 browser-extension tier; the native shell
+    // leaves it "" (AX URL read was removed — it blocked the main thread and
+    // Chrome rarely answers). window_title is the native join-key context.
     let msg = ClickMsg(
         ts: "t", app: "com.google.Chrome", x: 1, y: 2,
         blocks: [Block(text: "连衣裙", x0: 0.1, x1: 0.5, conf: 0.9, y0: 0.2, y1: 0.3)],
         windowTitle: "连衣裙批发 - 1688",
-        url: "https://detail.1688.com/offer/612345678901.html",
         captureOk: false
     )
     let json = String(data: try Wire.encodeLine(msg), encoding: .utf8)!
     #expect(json.contains("\"window_title\":\"连衣裙批发 - 1688\""))
-    // JSONEncoder escapes "/" as "\/" (legal JSON; the Python side decodes it
-    // back) — assert on the key and an unescapable fragment, not raw slashes.
-    #expect(json.contains("\"url\":"))
-    #expect(json.contains("612345678901.html"))
+    #expect(json.contains("\"url\":\"\""))
     #expect(json.contains("\"capture_ok\":false"))
     #expect(json.contains("\"y0\":0.2"))
     #expect(json.contains("\"y1\":0.3"))

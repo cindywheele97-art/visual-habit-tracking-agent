@@ -166,7 +166,13 @@ public final class ClickSensor {
         else { return }
         let point = event.location  // global, top-left origin (matches CG/SCK)
         let ts = iso.string(from: Date())
-        let url = UrlReader.focusedDocumentURL(pid: target.pid)
+        // url stays "" on the native tier: an AX read here would block this
+        // event-tap callback (main run loop) for up to the ~6s AX timeout and
+        // could get the tap disabled, silently losing the very burst clicks the
+        // completeness path below exists to preserve — and Chrome rarely
+        // answers AX anyway. The URL join key is the P7.4 browser extension's
+        // job; window_title (already resolved, no IPC) is the native context.
+        //
         // The click FACT always survives (audit §三 click-stream completeness):
         // bursts and failed captures emit a metadata-only record instead of
         // vanishing — silent, behavior-correlated loss (fast comparison
@@ -178,7 +184,7 @@ public final class ClickSensor {
                 ClickMsg(
                     ts: ts, app: target.bundleId,
                     x: Double(point.x), y: Double(point.y), blocks: [],
-                    windowTitle: target.title, url: url, captureOk: false
+                    windowTitle: target.title, url: "", captureOk: false
                 )
             )
             return
@@ -194,7 +200,7 @@ public final class ClickSensor {
             let msg = ClickMsg(
                 ts: ts, app: target.bundleId,
                 x: Double(point.x), y: Double(point.y), blocks: blocks ?? [],
-                windowTitle: target.title, url: url, captureOk: blocks != nil
+                windowTitle: target.title, url: "", captureOk: blocks != nil
             )
             self.onClick(msg)
             await MainActor.run { self.capturing = false }
