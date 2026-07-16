@@ -48,9 +48,10 @@ public final class DwellTracker {
     }
 
     /// Idle began: close the open interval at `t` — the LAST-ACTIVITY moment,
-    /// not the (later) instant idle was detected. Clamped to >= start so a
-    /// hands-off-right-after-focus case yields zero length (filtered), never a
-    /// negative interval.
+    /// not the (later) instant idle was detected. When the user goes hands-off
+    /// right after a focus tick, `t` can precede the interval start; the
+    /// minSeconds guard in close() rejects that (a negative or zero span is
+    /// never >= minSeconds), so no corrupt interval is ever emitted.
     public func idled(at t: Double) -> DwellInterval? {
         close(at: t)
     }
@@ -58,9 +59,11 @@ public final class DwellTracker {
     private func close(at t: Double) -> DwellInterval? {
         guard let c = current else { return nil }
         current = nil
-        let end = max(t, c.start)
-        guard end - c.start >= minSeconds else { return nil }  // flick-through / clamped noise
-        return DwellInterval(app: c.app, title: c.title, start: c.start, end: end)
+        // Sole gate: an out-of-order (t < start) or flick-through close has a
+        // span < minSeconds and is dropped. Keep this a `>=` on the raw span —
+        // do NOT abs() it, or negative-duration closes would leak as intervals.
+        guard t - c.start >= minSeconds else { return nil }
+        return DwellInterval(app: c.app, title: c.title, start: c.start, end: t)
     }
 }
 

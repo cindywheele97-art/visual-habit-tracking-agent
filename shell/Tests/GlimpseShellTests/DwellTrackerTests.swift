@@ -41,15 +41,16 @@ func intervalsBelowMinimumAreNoise() {
 }
 
 @Test
-func idleCloseIsClampedNeverNegative() {
+func idleCloseBeforeStartEmitsNothing() {
     // WHY (audit finding): intervals open at tick time (T) but idle closes at
     // last-input time, which can precede T when the user goes hands-off right
-    // after the focus tick. The close must clamp to >= start, never emit a
-    // negative/zero-length interval that reads as corrupt data.
+    // after the focus tick. An out-of-order close must emit NO interval — never
+    // a negative/zero-length one that reads as corrupt data. This pins the
+    // guard: if it were ever weakened to abs(span) >= minSeconds, idled(at:98)
+    // would leak an end=98 < start=100 interval and this test would go red.
     let t = DwellTracker(minSeconds: 2)
     _ = t.focusChanged(app: "a", title: "页", at: 100)
-    // last input was at 98 (before the 100 tick) → naive end 98 < start 100.
-    #expect(t.idled(at: 98) == nil)            // clamped to zero-length → filtered, not negative
+    #expect(t.idled(at: 98) == nil)            // last input at 98, before the 100 open
     // A genuine hands-on interval still closes correctly.
     _ = t.focusChanged(app: "a", title: "页", at: 200)
     let closed = t.idled(at: 260)
