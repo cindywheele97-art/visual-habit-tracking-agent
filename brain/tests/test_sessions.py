@@ -211,16 +211,38 @@ def test_outcome_before_any_run_is_sessionless() -> None:
 # ---- restart rehydration ------------------------------------------------------
 
 
-def test_rehydrate_restores_binding_and_open_run() -> None:
-    # WHY (round-3 finding): the sessionizer is memory-only; a brain restart
-    # must not orphan a prompt verdict nor split an in-flight run — state is
-    # reconstructible from the store and rehydrate() restores it.
+def test_snapshot_rehydrate_is_lossless() -> None:
+    # WHY (merge-gate findings, all 6): reconstructing sessionizer state from
+    # event rows is a LOSSY projection — it cannot hold (open implicit run +
+    # _ended anchor) at once, and row timestamps diverge from the live clock.
+    # The fix is verbatim state: snapshot() → rehydrate() must reproduce every
+    # observable behavior of the original instance.
     s = Sessionizer(idle_gap_seconds=900)
-    s.rehydrate(session_id="sel-1-0", last_ts=1000.0, open_run=True, ended_ts=None)
-    assert s.current() == "sel-1-0"
-    assert s.observe(1100.0) == "sel-1-0"       # mid-run click: same run, no split
+    run_a = s.begin(1000.0)
+    s.observe(1010.0)
+    s.end(1200.0)                    # deliberate close (grace anchor)
+    phantom = s.observe(1215.0)      # mandatory tab-focus click → implicit run B
+
     s2 = Sessionizer(idle_gap_seconds=900)
-    s2.rehydrate(session_id="sel-2-0", last_ts=1000.0, open_run=False, ended_ts=1005.0)
-    assert s2.current() == ""
-    assert s2.last_session(at=1050.0) == "sel-2-0"   # prompt verdict still binds
-    assert s2.last_session(at=2000.0) == ""          # grace still expires
+    s2.rehydrate(**s.snapshot())
+    # gate scenario 1: verdict after restart still binds the CLOSED run A…
+    assert s2.last_session(at=1220.0) == run_a
+    # …while browsing continues in the implicit run B, unsplit.
+    assert s2.observe(1300.0) == phantom
+    # seq continuity: a new run after rehydration cannot collide with old ids.
+    s2.end(1400.0)
+    assert s2.begin(1400.0) not in {run_a, phantom}
+
+
+def test_snapshot_preserves_the_live_clock_not_row_timestamps() -> None:
+    # WHY (merge-gate scenario 2): a 10-min reading dwell advances the LIVE
+    # clock to its end; rehydrating from any stored row ts (dwell start /
+    # outcome ts) rewinds it and splits the in-flight run after restart.
+    s = Sessionizer(idle_gap_seconds=900)
+    run = s.observe(43_200.0)                 # click 12:00:00
+    s.observe_span(43_205.0, 43_805.0)        # reading dwell → clock 12:10:05
+    s2 = Sessionizer(idle_gap_seconds=900)
+    s2.rehydrate(**s.snapshot())
+    assert s2.observe(44_130.0) == run        # click 12:15:30: 325s real gap → same run
+    # follow-up continuation dwell stays attributed after restart, too
+    assert s2.observe_span(44_110.0, 44_400.0) == run

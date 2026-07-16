@@ -137,22 +137,29 @@ class GlimpseServer:
             raw_kinds=HABIT_KINDS,
         )
         self._store = BehaviorStore(Path(cfg.brain.behavior_db))
-        # Sessionizer state is memory-only but reconstructible: rehydrate from
-        # the store so a brain restart neither splits an in-flight run nor
-        # orphans a verdict marked right after the restart. An injected
-        # sessionizer (tests) skips rehydration.
+        # Sessionizer state is persisted VERBATIM (snapshot per mutating event)
+        # and restored verbatim: a brain restart neither splits an in-flight
+        # run, orphans a prompt verdict, nor inverts deliberate-close-wins —
+        # reconstructing from event rows was a lossy projection (merge-gate).
+        # An injected sessionizer (tests) skips rehydration.
         if sessionizer is not None:
             self._sessions = sessionizer
         else:
             self._sessions = Sessionizer()
-            state = self._store.latest_session_state()
+            state = self._store.load_session_state()
             if state is not None:
-                sid, last_ts_iso, open_run, ended_iso = state
+                cur = state.get("current")
+                lts = state.get("last_ts")
+                eid = state.get("ended_id")
+                ets = state.get("ended_ts")
+                seq = state.get("seq")
                 self._sessions.rehydrate(
-                    session_id=sid,
-                    last_ts=_epoch(last_ts_iso),
-                    open_run=open_run,
-                    ended_ts=_epoch(ended_iso) if ended_iso else None,
+                    current=cur if isinstance(cur, str) else None,
+                    last_id=str(state.get("last_id") or ""),
+                    last_ts=lts if isinstance(lts, (int, float)) else None,
+                    ended_id=eid if isinstance(eid, str) else None,
+                    ended_ts=ets if isinstance(ets, (int, float)) else None,
+                    seq=seq if isinstance(seq, int) else 0,
                 )
         # Conversation state is PER customer: the active tracker follows the
         # contact on screen; parked trackers keep their positional anchor,
@@ -361,6 +368,7 @@ class GlimpseServer:
                     "capture_ok": msg.capture_ok,
                 },
             )
+            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, DwellMsg):
             # A dwell is passive evidence and arrives when it CLOSES (after the
             # clicks in its span). observe_span decides by the span's START:
@@ -393,6 +401,7 @@ class GlimpseServer:
                     "seconds": msg.seconds,
                 },
             )
+            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, SelectionControlMsg):
             # Ground-truth trajectory boundary. `start` forces a fresh session;
             # `end` closes the current one (its id is recorded before closing so
@@ -415,6 +424,7 @@ class GlimpseServer:
                 session_id=sid,
                 payload={"action": msg.action},
             )
+            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, SelectionOutcomeMsg):
             # The flywheel's target variable, attached to the run it describes:
             # the active one, or — within the idle gap — the one just closed by
@@ -443,6 +453,7 @@ class GlimpseServer:
                     "note": msg.note,
                 },
             )
+            self._store.save_session_state(self._sessions.snapshot())
         elif isinstance(msg, FeedbackMsg):
             await self._on_feedback(msg)
         elif isinstance(msg, SummarizeRequest):

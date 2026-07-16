@@ -53,27 +53,40 @@ def test_append_is_fail_soft_but_loud(tmp_path: Path, caplog: pytest.LogCaptureF
     assert store.query() == []  # degraded, not crashed
 
 
-def test_latest_session_state_open_and_closed(tmp_path: Path) -> None:
-    # WHY (P7.3 rehydration): after a brain restart the Sessionizer must know
-    # the most recent session, whether it was explicitly closed, and when —
-    # else restarts split in-flight runs and orphan prompt verdicts.
+def test_session_state_roundtrip_and_fail_soft(tmp_path: Path) -> None:
+    # WHY (merge gate, all 6 findings): rehydrating from event rows is a lossy
+    # projection — the store must persist the Sessionizer's VERBATIM snapshot.
+    # Same fail-soft contract as append: never raises, loud in logs, None when
+    # absent/corrupt.
     from glimpse_brain.store import BehaviorStore
 
     store = BehaviorStore(tmp_path / "b.sqlite3")
-    assert store.latest_session_state() is None  # empty store
+    assert store.load_session_state() is None  # empty store
 
-    store.append(kind="click", ts="T1", session_id="sel-1-0")
-    sid, last_ts, open_run, ended = store.latest_session_state()
-    assert (sid, last_ts, open_run, ended) == ("sel-1-0", "T1", True, None)
+    state = {
+        "current": "sel-2-1",
+        "last_id": "sel-2-1",
+        "last_ts": 1215.0,
+        "ended_id": "sel-1-0",
+        "ended_ts": 1200.0,
+        "seq": 2,
+    }
+    store.save_session_state(state)
+    assert store.load_session_state() == state
 
-    store.append(
-        kind="selection_control", ts="T2", session_id="sel-1-0",
-        payload={"action": "end"},
-    )
-    sid, last_ts, open_run, ended = store.latest_session_state()
-    assert (sid, open_run, ended) == ("sel-1-0", False, "T2")
+    # overwrite (single-row semantics), including clearing the ended anchor
+    state2 = dict(state, current=None, ended_id=None, ended_ts=None, seq=3)
+    store.save_session_state(state2)
+    assert store.load_session_state() == state2
+    store.close()
 
-    # a NEW session after the closed one → open again, no stale ended_ts
-    store.append(kind="click", ts="T3", session_id="sel-3-0")
-    sid, last_ts, open_run, ended = store.latest_session_state()
-    assert (sid, open_run, ended) == ("sel-3-0", True, None)
+    # corrupt payload → None + warning, never an exception
+    import sqlite3
+
+    conn = sqlite3.connect(str(tmp_path / "b.sqlite3"))
+    conn.execute("UPDATE session_state SET state = 'not json'")
+    conn.commit()
+    conn.close()
+    store2 = BehaviorStore(tmp_path / "b.sqlite3")
+    assert store2.load_session_state() is None
+    store2.close()

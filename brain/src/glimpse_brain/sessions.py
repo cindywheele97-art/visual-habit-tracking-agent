@@ -116,23 +116,39 @@ class Sessionizer:
 
     # ---- restart --------------------------------------------------------------
 
+    def snapshot(self) -> dict[str, object]:
+        """Verbatim state for persistence. Reconstructing this from event rows
+        is a LOSSY projection (merge-gate findings: it cannot hold an open
+        implicit run AND the _ended anchor at once, and row timestamps diverge
+        from the live clock) — so the live state itself is what gets stored."""
+        return {
+            "current": self._current,
+            "last_id": self._last_id,
+            "last_ts": self._last_ts,
+            "ended_id": self._ended[0] if self._ended else None,
+            "ended_ts": self._ended[1] if self._ended else None,
+            "seq": self._seq,
+        }
+
     def rehydrate(
         self,
         *,
-        session_id: str,
-        last_ts: float,
-        open_run: bool,
+        current: str | None,
+        last_id: str,
+        last_ts: float | None,
+        ended_id: str | None,
         ended_ts: float | None,
+        seq: int,
     ) -> None:
-        """Restore state from the behavior store after a brain restart, so an
-        in-flight run continues (no split) and a prompt post-restart verdict
-        still binds (no orphan). Call before any observe/begin."""
-        if not session_id:
-            return
-        self._last_id = session_id
+        """Restore a snapshot() verbatim after a brain restart, so an in-flight
+        run continues (no split), a prompt post-restart verdict still binds to
+        the deliberately closed run (no orphan, no phantom steal), and new run
+        ids cannot collide with pre-restart ones. Call before any observe."""
+        self._current = current
+        self._last_id = last_id
         self._last_ts = last_ts
-        self._current = session_id if open_run else None
-        self._ended = (session_id, ended_ts) if (not open_run and ended_ts) else None
+        self._ended = (ended_id, ended_ts) if ended_id and ended_ts is not None else None
+        self._seq = seq
 
     def _open(self, ts: float) -> None:
         # Millisecond precision + a per-instance sequence: deterministic across a

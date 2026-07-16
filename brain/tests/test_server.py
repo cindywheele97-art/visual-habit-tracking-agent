@@ -419,6 +419,99 @@ async def test_restart_preserves_run_binding_and_does_not_split(tmp_path: Path) 
         task2.cancel()
 
 
+async def test_restart_in_grace_window_keeps_deliberate_close_wins(tmp_path: Path) -> None:
+    # WHY (merge gate, high): after 结束选品 the live sessionizer holds TWO
+    # sessions (ended A + the implicit run the mandatory tab-focus click
+    # opens). A lossy rehydration inverted deliberate-close-wins — verdicts
+    # after restart bound the phantom run. Verbatim snapshots must survive.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server1 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task1 = asyncio.create_task(server1.run())
+    await asyncio.sleep(0.05)
+    reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+    writer.write(
+        b'{"type":"selection_control","ts":"2026-07-16T10:00:00Z","action":"start"}\n'
+    )
+    writer.write(_click("2026-07-16T10:10:00Z"))
+    writer.write(
+        b'{"type":"selection_control","ts":"2026-07-16T10:30:00Z","action":"end"}\n'
+    )
+    writer.write(_click("2026-07-16T10:30:05Z"))  # mandatory tab-focus click
+    await writer.drain()
+    await _drain_dispatch(reader, writer)
+    writer.close()
+    task1.cancel()  # restart inside the grace window
+    await asyncio.sleep(0.05)
+
+    server2 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task2 = asyncio.create_task(server2.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(
+            '{"type":"selection_outcome","ts":"2026-07-16T10:30:15Z",'
+            '"product_key":"P1","verdict":"selected","note":""}\n'.encode()
+        )
+        writer.write(_click("2026-07-16T10:31:00Z"))  # browsing continues in B
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        clicks = store.query(kind="click")
+        run_a = clicks[0]["session_id"]          # 10:10 click inside run A
+        phantom_b = clicks[1]["session_id"]      # 10:30:05 tab-focus click
+        assert run_a != phantom_b
+        outcome_sid = store.query(kind="selection_outcome")[0]["session_id"]
+        assert outcome_sid == run_a              # deliberate close still wins
+        assert clicks[2]["session_id"] == phantom_b  # implicit run unsplit too
+        store.close()
+        writer.close()
+    finally:
+        task2.cancel()
+
+
+async def test_restart_after_long_dwell_does_not_split_the_run(tmp_path: Path) -> None:
+    # WHY (merge gate, high): a reading dwell advances the live clock to its
+    # END; rehydrating from the dwell row's start_ts rewound the clock by the
+    # dwell's duration and split the in-flight run after restart.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server1 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task1 = asyncio.create_task(server1.run())
+    await asyncio.sleep(0.05)
+    reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+    writer.write(_click("2026-07-16T12:00:00Z"))
+    writer.write(
+        b'{"type":"dwell","app":"com.google.Chrome","start_ts":"2026-07-16T12:00:05Z",'
+        b'"end_ts":"2026-07-16T12:10:05Z","seconds":600.0}\n'
+    )
+    await writer.drain()
+    await _drain_dispatch(reader, writer)
+    writer.close()
+    task1.cancel()
+    await asyncio.sleep(0.05)
+
+    server2 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task2 = asyncio.create_task(server2.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        # 12:15:30 = 325s after the dwell END (continuation) but 925s after its
+        # start — a start_ts-rewound clock would split here.
+        writer.write(_click("2026-07-16T12:15:30Z"))
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        click_sids = {r["session_id"] for r in store.query(kind="click")}
+        assert len(click_sids) == 1  # one run across the restart
+        store.close()
+        writer.close()
+    finally:
+        task2.cancel()
+
+
 async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
     # WHY: '结束选品' is a ground-truth boundary — the next click is a new run
     # even within the idle gap.

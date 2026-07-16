@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts);
+CREATE TABLE IF NOT EXISTS session_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL
+);
 """
 
 _COLUMNS = (
@@ -122,37 +126,37 @@ class BehaviorStore:
             log.warning("behavior store query failed: %s", exc)
             return []
 
-    def latest_session_state(self) -> tuple[str, str, bool, str | None] | None:
-        """(session_id, last_event_ts, open?, ended_ts) of the most recently
-        stamped session — the Sessionizer's rehydration source after a brain
-        restart. A session is closed iff a selection_control end event exists
-        for it. None when no session-stamped event exists (or store disabled)."""
+    def save_session_state(self, state: dict[str, object]) -> None:
+        """Persist the Sessionizer's VERBATIM snapshot (single row). Rebuilding
+        state from event rows was a lossy projection — it could not hold an
+        open implicit run and the ended-run grace anchor at once, and row
+        timestamps diverge from the live clock (merge-gate findings)."""
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                "INSERT INTO session_state (id, state) VALUES (1, ?)"
+                " ON CONFLICT(id) DO UPDATE SET state = excluded.state",
+                (json.dumps(state, ensure_ascii=False),),
+            )
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("behavior store session-state save failed: %s", exc)
+
+    def load_session_state(self) -> dict[str, object] | None:
+        """The last saved Sessionizer snapshot, or None (absent/corrupt/disabled)."""
         if self._conn is None:
             return None
         try:
             row = self._conn.execute(
-                "SELECT session_id, ts FROM events WHERE session_id != ''"
-                " ORDER BY id DESC LIMIT 1"
+                "SELECT state FROM session_state WHERE id = 1"
             ).fetchone()
             if row is None:
                 return None
-            sid, last_ts = row
-            controls = self._conn.execute(
-                "SELECT ts, payload FROM events"
-                " WHERE kind = 'selection_control' AND session_id = ?"
-                " ORDER BY id DESC",
-                (sid,),
-            ).fetchall()
-            for ts, payload in controls:
-                try:
-                    action = json.loads(payload).get("action")
-                except json.JSONDecodeError:
-                    continue
-                if action == "end":
-                    return (sid, last_ts, False, ts)
-            return (sid, last_ts, True, None)
-        except sqlite3.Error as exc:
-            log.warning("behavior store session-state query failed: %s", exc)
+            state = json.loads(row[0])
+            return state if isinstance(state, dict) else None
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
+            log.warning("behavior store session-state load failed: %s", exc)
             return None
 
     def close(self) -> None:
