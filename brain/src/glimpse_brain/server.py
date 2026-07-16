@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -24,6 +25,8 @@ from glimpse_brain.protocol import (
     OutboundMsg,
     ProtocolError,
     RepliedMsg,
+    SelectionControlMsg,
+    SelectionOutcomeMsg,
     StatusMsg,
     SuggestionItem,
     SuggestionsMsg,
@@ -36,6 +39,7 @@ from glimpse_brain.feedback import FeedbackLog, FeedbackRecord
 from glimpse_brain.memory import Memory
 from glimpse_brain.satisfaction import SatisfactionTracker
 from glimpse_brain.redaction import Redactor
+from glimpse_brain.sessions import Sessionizer
 from glimpse_brain.settle import SettleGate
 from glimpse_brain.store import BehaviorStore
 from glimpse_brain.agent import Agent
@@ -58,7 +62,21 @@ IPC_LINE_LIMIT = 2**21  # 2 MiB
 # Habit-event kinds bypass redaction on the local substrates (audit §十, privacy
 # freeze): their digit runs are the flywheel's join keys and never leave this
 # machine. CS/conversation kinds stay fully redacted.
-HABIT_KINDS = frozenset({"click", "dwell"})
+HABIT_KINDS = frozenset(
+    {"click", "dwell", "selection_control", "selection_outcome"}
+)
+
+
+def _epoch(ts: str) -> float:
+    """ISO8601 → epoch seconds for the Sessionizer. A malformed ts falls back to
+    wall-clock — during a spool replay that value is future-skewed relative to
+    the backlog, which corrupts at most ONE boundary decision: active events
+    reassign the recency clock unconditionally, so the sessionizer self-corrects
+    on the next real click (see Sessionizer.observe clock semantics)."""
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return time.time()
 
 class _Unset:
     """Sentinel type: distinguishes 'memory omitted → build default' from an
@@ -108,6 +126,7 @@ class GlimpseServer:
         llm: LLMClient | None = None,
         tool_client: ToolUseClient | None = None,
         memory: Memory | None | _Unset = _UNSET,
+        sessionizer: Sessionizer | None = None,
     ) -> None:
         self._cfg = cfg
         self._redactor = Redactor(cfg.redaction.patterns)
@@ -118,6 +137,33 @@ class GlimpseServer:
             raw_kinds=HABIT_KINDS,
         )
         self._store = BehaviorStore(Path(cfg.brain.behavior_db))
+        # Sessionizer state is persisted VERBATIM (snapshot per mutating event)
+        # and restored verbatim: a brain restart neither splits an in-flight
+        # run, orphans a prompt verdict, nor inverts deliberate-close-wins —
+        # reconstructing from event rows was a lossy projection (merge-gate).
+        # An injected sessionizer (tests) skips rehydration.
+        if sessionizer is not None:
+            self._sessions = sessionizer
+        else:
+            self._sessions = Sessionizer()
+            state = self._store.load_session_state()
+            if state is not None:
+                cur = state.get("current")
+                copened = state.get("current_opened")
+                lts = state.get("last_ts")
+                eid = state.get("ended_id")
+                ets = state.get("ended_ts")
+                seq = state.get("seq")
+                self._sessions.rehydrate(
+                    current=cur if isinstance(cur, str) else None,
+                    current_opened=copened if isinstance(copened, (int, float)) else None,
+                    prev_id=str(state.get("prev_id") or ""),
+                    last_id=str(state.get("last_id") or ""),
+                    last_ts=lts if isinstance(lts, (int, float)) else None,
+                    ended_id=eid if isinstance(eid, str) else None,
+                    ended_ts=ets if isinstance(ets, (int, float)) else None,
+                    seq=seq if isinstance(seq, int) else 0,
+                )
         # Conversation state is PER customer: the active tracker follows the
         # contact on screen; parked trackers keep their positional anchor,
         # tail, and text dedup so revisits restore context without re-firing.
@@ -294,6 +340,7 @@ class GlimpseServer:
                 {"suggestion_id": msg.suggestion_id, "mode": msg.mode},
             )
         elif isinstance(msg, ClickMsg):
+            sid = self._sessions.observe(_epoch(msg.ts))
             texts = [b.text for b in msg.blocks]
             self._events.append(
                 "click",
@@ -307,6 +354,7 @@ class GlimpseServer:
                     "window_title": msg.window_title,
                     "url": msg.url,
                     "capture_ok": msg.capture_ok,
+                    "session_id": sid,
                 },
             )
             self._store.append(
@@ -315,14 +363,24 @@ class GlimpseServer:
                 app=msg.app,
                 window_title=msg.window_title,
                 url=msg.url,
+                session_id=sid,
                 payload={
                     "x": msg.x,
                     "y": msg.y,
                     "texts": texts,
                     "capture_ok": msg.capture_ok,
                 },
+                state=self._sessions.snapshot(),
             )
         elif isinstance(msg, DwellMsg):
+            # A dwell is passive evidence and arrives when it CLOSES (after the
+            # clicks in its span). observe_span decides by the span's START:
+            # continuation attaches (and extends an OPEN run's recency);
+            # detached — began beyond the idle gap — is honestly unattributed
+            # and inert, so a stale dwell can't resurrect a dead run.
+            sid = self._sessions.observe_span(
+                _epoch(msg.start_ts), _epoch(msg.end_ts)
+            )
             interval = {
                 "app": msg.app,
                 "window_title": msg.window_title,
@@ -330,6 +388,7 @@ class GlimpseServer:
                 "start_ts": msg.start_ts,
                 "end_ts": msg.end_ts,
                 "seconds": msg.seconds,
+                "session_id": sid,
             }
             self._events.append("dwell", "", dict(interval))
             self._store.append(
@@ -338,11 +397,65 @@ class GlimpseServer:
                 app=msg.app,
                 window_title=msg.window_title,
                 url=msg.url,
+                session_id=sid,
                 payload={
                     "start_ts": msg.start_ts,
                     "end_ts": msg.end_ts,
                     "seconds": msg.seconds,
                 },
+                state=self._sessions.snapshot(),
+            )
+        elif isinstance(msg, SelectionControlMsg):
+            # Ground-truth trajectory boundary. `start` forces a fresh session;
+            # `end` closes the current one (its id is recorded before closing so
+            # the boundary itself is attributable).
+            if msg.action == "start":
+                sid = self._sessions.begin(_epoch(msg.ts))
+            else:
+                sid = self._sessions.current()
+                # end(ts) anchors the verdict grace window at the explicit
+                # close — the run may have ended after a click-free stretch.
+                self._sessions.end(_epoch(msg.ts))
+            self._events.append(
+                "selection_control",
+                "",
+                {"action": msg.action, "session_id": sid, "ts": msg.ts},
+            )
+            self._store.append(
+                kind="selection_control",
+                ts=msg.ts,
+                session_id=sid,
+                payload={"action": msg.action},
+                state=self._sessions.snapshot(),
+            )
+        elif isinstance(msg, SelectionOutcomeMsg):
+            # The flywheel's target variable, attached to the run it describes:
+            # the active one, or — within the idle gap — the one just closed by
+            # 结束选品 (else 结束选品→标记 orphans the verdict with ""). Beyond
+            # the gap it is honestly sessionless rather than mislabeling a
+            # long-dead run.
+            sid = self._sessions.bind_outcome(at=_epoch(msg.ts))
+            self._events.append(
+                "selection_outcome",
+                "",
+                {
+                    "session_id": sid,
+                    "product_key": msg.product_key,
+                    "verdict": msg.verdict,
+                    "note": msg.note,
+                    "ts": msg.ts,
+                },
+            )
+            self._store.append(
+                kind="selection_outcome",
+                ts=msg.ts,
+                session_id=sid,
+                payload={
+                    "product_key": msg.product_key,
+                    "verdict": msg.verdict,
+                    "note": msg.note,
+                },
+                state=self._sessions.snapshot(),
             )
         elif isinstance(msg, FeedbackMsg):
             await self._on_feedback(msg)

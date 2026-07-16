@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events(kind, ts);
+CREATE TABLE IF NOT EXISTS session_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL
+);
 """
 
 _COLUMNS = (
@@ -80,7 +84,12 @@ class BehaviorStore:
         url: str = "",
         session_id: str = "",
         payload: dict[str, object] | None = None,
+        state: dict[str, object] | None = None,
     ) -> None:
+        """Insert an event row and, when `state` is given, the sessionizer
+        snapshot — in ONE transaction. A crash between separate commits left
+        the snapshot referencing a run the event table didn't show (or vice
+        versa), splitting the run on rehydration (merge-gate finding)."""
         if self._conn is None:
             return
         try:
@@ -99,6 +108,12 @@ class BehaviorStore:
                     json.dumps(payload or {}, ensure_ascii=False),
                 ),
             )
+            if state is not None:
+                self._conn.execute(
+                    "INSERT INTO session_state (id, state) VALUES (1, ?)"
+                    " ON CONFLICT(id) DO UPDATE SET state = excluded.state",
+                    (json.dumps(state, ensure_ascii=False),),
+                )
             self._conn.commit()
         except sqlite3.Error as exc:
             log.warning("behavior store append failed: %s", exc)
@@ -121,6 +136,39 @@ class BehaviorStore:
         except sqlite3.Error as exc:
             log.warning("behavior store query failed: %s", exc)
             return []
+
+    def save_session_state(self, state: dict[str, object]) -> None:
+        """Persist the Sessionizer's VERBATIM snapshot (single row). Rebuilding
+        state from event rows was a lossy projection — it could not hold an
+        open implicit run and the ended-run grace anchor at once, and row
+        timestamps diverge from the live clock (merge-gate findings)."""
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                "INSERT INTO session_state (id, state) VALUES (1, ?)"
+                " ON CONFLICT(id) DO UPDATE SET state = excluded.state",
+                (json.dumps(state, ensure_ascii=False),),
+            )
+            self._conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("behavior store session-state save failed: %s", exc)
+
+    def load_session_state(self) -> dict[str, object] | None:
+        """The last saved Sessionizer snapshot, or None (absent/corrupt/disabled)."""
+        if self._conn is None:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT state FROM session_state WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                return None
+            state = json.loads(row[0])
+            return state if isinstance(state, dict) else None
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
+            log.warning("behavior store session-state load failed: %s", exc)
+            return None
 
     def close(self) -> None:
         if self._conn is not None:

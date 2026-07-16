@@ -120,6 +120,46 @@ public struct FeedbackMsg: Codable {
     }
 }
 
+/// Operator's 开始/结束选品 control — a ground-truth trajectory boundary. The
+/// brain's Sessionizer derives the session_id (audit §三 B3).
+public struct SelectionControlMsg: Codable {
+    public var type = "selection_control"
+    public var ts: String
+    public var action: String  // "start" | "end"
+
+    public init(ts: String, action: String) {
+        self.ts = ts
+        self.action = action
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, ts, action
+    }
+}
+
+/// The final selection result for the active trajectory — the flywheel's target
+/// variable (audit §三 B4). `note` is where the implicit WHY gets captured.
+public struct SelectionOutcomeMsg: Codable {
+    public var type = "selection_outcome"
+    public var ts: String
+    public var productKey: String
+    public var verdict: String  // "selected" | "rejected" | "shortlisted"
+    public var note: String
+
+    public init(ts: String, productKey: String = "", verdict: String, note: String = "") {
+        self.ts = ts
+        self.productKey = productKey
+        self.verdict = verdict
+        self.note = note
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, ts
+        case productKey = "product_key"
+        case verdict, note
+    }
+}
+
 public struct ClickMsg: Codable {
     public var type = "click"
     public var ts: String
