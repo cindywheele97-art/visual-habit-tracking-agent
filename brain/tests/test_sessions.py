@@ -81,17 +81,47 @@ def test_outcome_after_end_binds_to_the_just_closed_run() -> None:
     run = s.begin(1000.0)
     s.observe(1010.0)         # a click in the run
     s.end()
-    assert s.current() == ""              # run is closed
-    assert s.last_session() == run        # …but the outcome can still find it
+    assert s.current() == ""                    # run is closed
+    assert s.last_session(at=1015.0) == run     # …but a prompt verdict finds it
     # A second run then an end → last_session tracks the most recent.
     run2 = s.begin(5000.0)
     s.end()
-    assert s.last_session() == run2
+    assert s.last_session(at=5005.0) == run2
+
+
+def test_outcome_long_after_the_last_run_is_sessionless() -> None:
+    # WHY (re-review finding): _last_id must not live forever — a verdict marked
+    # hours later, in a fresh context with no run, would silently mislabel a
+    # long-dead trajectory. Beyond the idle gap the honest answer is "" (same
+    # segmentation semantics as clicks: within the gap it would have merged).
+    s = Sessionizer(idle_gap_seconds=900)
+    run = s.begin(1000.0)
+    s.observe(1010.0)
+    s.end()
+    assert s.last_session(at=1900.0) == run   # 890s after last activity: binds
+    assert s.last_session(at=2000.0) == ""    # 990s: a different context now
+    # An OPEN run binds regardless of elapsed time — only closed runs expire.
+    run2 = s.begin(10_000.0)
+    assert s.last_session(at=99_999.0) == run2
 
 
 def test_outcome_before_any_run_is_sessionless() -> None:
     s = Sessionizer()
-    assert s.last_session() == ""  # truly no run → "" (honest, not a fabrication)
+    assert s.last_session(at=1000.0) == ""  # truly no run → "" (honest)
+
+
+def test_future_skew_self_corrects_on_the_next_active_event() -> None:
+    # WHY (re-review finding, high): one future-skewed timestamp (e.g. the
+    # _epoch time.time() fallback during a spool replay) must NOT permanently
+    # freeze idle-gap splitting. Active events are the recency ground truth and
+    # reset the clock unconditionally — damage is bounded to at most one
+    # boundary decision, after which later real gaps split runs again.
+    s = Sessionizer(idle_gap_seconds=900)
+    r1 = s.observe(32_400.0)                        # 09:00, run R1
+    s.observe(61_200.0, opens=False)                # malformed dwell → 17:00 skew
+    assert s.observe(39_600.0) == r1                # 11:00: one merged decision (bounded)
+    r3 = s.observe(46_800.0)                        # 13:00: 2h after 11:00 → MUST split
+    assert r3 != r1
 
 
 def test_passive_dwell_never_rewinds_the_clock_or_splits() -> None:

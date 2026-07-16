@@ -69,7 +69,10 @@ HABIT_KINDS = frozenset(
 
 def _epoch(ts: str) -> float:
     """ISO8601 → epoch seconds for the Sessionizer. A malformed ts falls back to
-    wall-clock (a rare error path; a spurious boundary there is harmless)."""
+    wall-clock — during a spool replay that value is future-skewed relative to
+    the backlog, which corrupts at most ONE boundary decision: active events
+    reassign the recency clock unconditionally, so the sessionizer self-corrects
+    on the next real click (see Sessionizer.observe clock semantics)."""
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
     except ValueError:
@@ -393,9 +396,11 @@ class GlimpseServer:
             )
         elif isinstance(msg, SelectionOutcomeMsg):
             # The flywheel's target variable, attached to the run it describes:
-            # the active one, or the one just closed by 结束选品 (last_session,
-            # not current — else 结束选品→标记 orphans the verdict with "").
-            sid = self._sessions.last_session()
+            # the active one, or — within the idle gap — the one just closed by
+            # 结束选品 (else 结束选品→标记 orphans the verdict with ""). Beyond
+            # the gap it is honestly sessionless rather than mislabeling a
+            # long-dead run.
+            sid = self._sessions.last_session(at=_epoch(msg.ts))
             self._events.append(
                 "selection_outcome",
                 "",

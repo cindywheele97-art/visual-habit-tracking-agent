@@ -32,36 +32,56 @@ class Sessionizer:
         (or the last one) and never opens/splits a run — a backdated dwell that
         closed after its span must not fabricate a boundary.
 
-        The recency clock is MONOTONIC: an out-of-order (older) event never
-        rewinds `_last_ts`, so it can neither split a run nor inflate the next
-        gap (review finding — dwells arrive after the clicks in their span)."""
+        Clock semantics are ASYMMETRIC by arrival order (re-review finding):
+        active events arrive in emission order on the FIFO socket, so they are
+        the recency ground truth and ASSIGN the clock unconditionally — a
+        future-skewed ts (e.g. the _epoch wall-clock fallback during a spool
+        replay) corrupts at most ONE boundary decision, then self-corrects.
+        Dwells are the systematically LATE arrivals (emitted when the interval
+        closes), so they only advance the clock (max) and can never rewind it."""
         if opens and (
             self._current is None
             or (self._last_ts is not None and ts - self._last_ts > self._idle_gap)
         ):
             self._open(ts)
-        self._last_ts = ts if self._last_ts is None else max(self._last_ts, ts)
+        if opens or self._last_ts is None:
+            self._last_ts = ts
+        else:
+            self._last_ts = max(self._last_ts, ts)
         return self._current or self._last_id
 
     def begin(self, ts: float) -> str:
         """Explicit '开始选品': force a fresh session boundary even with no gap."""
         self._open(ts)
-        self._last_ts = ts if self._last_ts is None else max(self._last_ts, ts)
+        self._last_ts = ts  # active ground truth, same as observe(opens=True)
         return self._current or ""
 
     def end(self) -> None:
-        """Explicit '结束选品': close the run. `last_session()` still resolves to
-        it so a verdict marked right after can bind to the run it describes."""
+        """Explicit '结束选品': close the run. `last_session(at=...)` still
+        resolves to it within the idle gap so a verdict marked right after can
+        bind to the run it describes."""
         self._current = None
 
     def current(self) -> str:
         """The active (open) session_id, or "" when none is open."""
         return self._current or ""
 
-    def last_session(self) -> str:
-        """The session an outcome attaches to: the active run, or the most
-        recently closed one — "" only when no run has ever started."""
-        return self._current or self._last_id
+    def last_session(self, *, at: float) -> str:
+        """The session an outcome at time `at` attaches to: the active run, or —
+        within the idle gap of the last activity — the most recently closed one.
+        Beyond the gap the honest answer is "" (re-review finding: _last_id must
+        not bind a fresh-context verdict to a long-dead trajectory). Symmetric
+        with click segmentation: an outcome that would have merged binds; one
+        that would have opened a new run does not."""
+        if self._current is not None:
+            return self._current
+        if (
+            self._last_id
+            and self._last_ts is not None
+            and at - self._last_ts <= self._idle_gap
+        ):
+            return self._last_id
+        return ""
 
     def _open(self, ts: float) -> None:
         # Millisecond precision + a per-instance sequence: deterministic across a
