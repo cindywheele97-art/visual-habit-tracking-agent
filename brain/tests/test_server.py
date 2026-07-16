@@ -375,6 +375,50 @@ async def test_late_dwell_does_not_split_a_continuous_run(tmp_path: Path) -> Non
         task.cancel()
 
 
+async def test_restart_preserves_run_binding_and_does_not_split(tmp_path: Path) -> None:
+    # WHY (review finding): the sessionizer is memory-only; without rehydration
+    # a brain restart splits an in-flight run and orphans a verdict marked
+    # right after. Two server generations over the same store must behave as one.
+    from glimpse_brain.store import BehaviorStore
+
+    cfg = make_config(tmp_path)
+    server1 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task1 = asyncio.create_task(server1.run())
+    await asyncio.sleep(0.05)
+    reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+    writer.write(
+        b'{"type":"selection_control","ts":"2026-07-16T09:00:00Z","action":"start"}\n'
+    )
+    writer.write(_click("2026-07-16T09:00:10Z"))
+    await writer.drain()
+    await _drain_dispatch(reader, writer)
+    writer.close()
+    task1.cancel()  # brain "crashes" mid-run
+    await asyncio.sleep(0.05)
+
+    server2 = GlimpseServer(cfg, llm=FakeLLM(), tool_client=FakeToolClient())
+    task2 = asyncio.create_task(server2.run())
+    await asyncio.sleep(0.05)
+    try:
+        reader, writer = await asyncio.open_unix_connection(cfg.brain.socket_path)
+        writer.write(_click("2026-07-16T09:01:00Z"))  # 50s later: same run
+        writer.write(
+            '{"type":"selection_outcome","ts":"2026-07-16T09:01:30Z",'
+            '"product_key":"P","verdict":"selected","note":""}\n'.encode()
+        )
+        await writer.drain()
+        await _drain_dispatch(reader, writer)
+        store = BehaviorStore(Path(cfg.brain.behavior_db))
+        click_sids = {r["session_id"] for r in store.query(kind="click")}
+        assert len(click_sids) == 1  # the restart did not split the run
+        outcome_sid = store.query(kind="selection_outcome")[0]["session_id"]
+        assert outcome_sid == click_sids.pop() != ""  # verdict bound across restart
+        store.close()
+        writer.close()
+    finally:
+        task2.cancel()
+
+
 async def test_selection_end_starts_a_fresh_session(tmp_path: Path) -> None:
     # WHY: '结束选品' is a ground-truth boundary — the next click is a new run
     # even within the idle gap.

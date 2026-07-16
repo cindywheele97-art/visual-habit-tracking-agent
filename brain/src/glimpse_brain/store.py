@@ -122,6 +122,39 @@ class BehaviorStore:
             log.warning("behavior store query failed: %s", exc)
             return []
 
+    def latest_session_state(self) -> tuple[str, str, bool, str | None] | None:
+        """(session_id, last_event_ts, open?, ended_ts) of the most recently
+        stamped session — the Sessionizer's rehydration source after a brain
+        restart. A session is closed iff a selection_control end event exists
+        for it. None when no session-stamped event exists (or store disabled)."""
+        if self._conn is None:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT session_id, ts FROM events WHERE session_id != ''"
+                " ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            sid, last_ts = row
+            controls = self._conn.execute(
+                "SELECT ts, payload FROM events"
+                " WHERE kind = 'selection_control' AND session_id = ?"
+                " ORDER BY id DESC",
+                (sid,),
+            ).fetchall()
+            for ts, payload in controls:
+                try:
+                    action = json.loads(payload).get("action")
+                except json.JSONDecodeError:
+                    continue
+                if action == "end":
+                    return (sid, last_ts, False, ts)
+            return (sid, last_ts, True, None)
+        except sqlite3.Error as exc:
+            log.warning("behavior store session-state query failed: %s", exc)
+            return None
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()

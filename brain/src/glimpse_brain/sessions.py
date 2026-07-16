@@ -2,14 +2,32 @@
 
 Stamps a session_id onto every behavior event so the flywheel's atomic record
 is the 选品 *trajectory* (a sequence of considered pages → outcome), not the
-isolated click. Boundaries come from two sources, both deterministic code — no
-LLM (Rule 5):
+isolated click. Deterministic code, no LLM (Rule 5). OS-free and time-injected
+so the boundary semantics the analytics layer trusts are fully unit-tested.
 
-  - automatic: an inactivity gap longer than `idle_gap_seconds` ends a run
-  - explicit: the operator's 开始/结束选品 controls give ground-truth boundaries
+Semantics (converged over four adversarial review rounds — each rule below
+exists because its absence was a reproduced corruption):
 
-OS-free and time-injected (observe/begin take epoch seconds) so the boundary
-logic the analytics layer trusts is fully unit-tested.
+- CLICKS (`observe`) are active ground truth and arrive in FIFO emission
+  order: they open runs (no run open, or idle gap exceeded) and ASSIGN the
+  recency clock unconditionally — one future-skewed timestamp corrupts at most
+  one boundary decision, then self-corrects.
+- DWELLS (`observe_span`) are passive and systematically late (emitted when
+  the interval closes). A span that BEGAN within the idle gap of the last
+  activity is a continuation: it labels the run and, while the run is OPEN,
+  extends recency to its end (proof of continuous attention; can never rewind).
+  A span that began beyond the gap is detached: honestly unattributed (""),
+  zero side effects — it must not resurrect a dead run, merge trajectories, or
+  re-arm verdict binding. Scroll-only trajectories therefore stay coarse until
+  the P7.4 extension tier.
+- 开始/结束选品 (`begin`/`end`) are operator ground truth. `end(ts)` records the
+  explicit close as the grace-window anchor: a verdict within the idle gap of
+  that close binds to the closed run EVEN IF a stray click opened an implicit
+  run in between (marking requires focusing the product tab, which itself
+  clicks). `begin` clears that preference — verdicts then belong to the new run.
+- Restart: state is reconstructible from the behavior store; `rehydrate()`
+  restores it so a brain restart neither orphans a prompt verdict nor splits
+  an in-flight run.
 """
 
 from __future__ import annotations
@@ -19,60 +37,73 @@ class Sessionizer:
     def __init__(self, idle_gap_seconds: float = 900.0) -> None:
         self._idle_gap = idle_gap_seconds
         self._current: str | None = None
-        self._last_id: str = ""  # most recent run id, retained across end()
+        self._last_id = ""  # most recent run id, retained across end()
         self._last_ts: float | None = None
+        # (run_id, close_ts) of the most recent EXPLICIT 结束选品 — the verdict
+        # grace anchor. Cleared by begin(); expires after idle_gap.
+        self._ended: tuple[str, float] | None = None
         self._seq = 0
 
-    def observe(self, ts: float, *, opens: bool = True) -> str:
-        """Session_id for a behavior event at `ts`.
+    # ---- active events (clicks) ---------------------------------------------
 
-        `opens=True` (clicks — active intent): starts a new session when none is
-        active or the idle gap since the last activity is exceeded.
-        `opens=False` (dwells — passive evidence): attaches to the active run
-        (or the last one) and never opens/splits a run — a backdated dwell that
-        closed after its span must not fabricate a boundary.
-
-        Clock semantics are ASYMMETRIC by arrival order (re-review finding):
-        active events arrive in emission order on the FIFO socket, so they are
-        the recency ground truth and ASSIGN the clock unconditionally — a
-        future-skewed ts (e.g. the _epoch wall-clock fallback during a spool
-        replay) corrupts at most ONE boundary decision, then self-corrects.
-        Dwells are the systematically LATE arrivals (emitted when the interval
-        closes), so they only advance the clock (max) and can never rewind it."""
-        if opens and (
-            self._current is None
-            or (self._last_ts is not None and ts - self._last_ts > self._idle_gap)
+    def observe(self, ts: float) -> str:
+        """Session_id for an active behavior event (click) at `ts`."""
+        if self._current is None or (
+            self._last_ts is not None and ts - self._last_ts > self._idle_gap
         ):
             self._open(ts)
-        if opens or self._last_ts is None:
-            self._last_ts = ts
-        else:
-            self._last_ts = max(self._last_ts, ts)
+        self._last_ts = ts  # active = recency ground truth: assign, self-correcting
         return self._current or self._last_id
 
+    # ---- passive events (dwells) --------------------------------------------
+
+    def observe_span(self, start: float, end: float) -> str:
+        """Session_id for a passive attention interval [start, end].
+
+        Continuation (started within the idle gap of last activity): labels the
+        current-or-last run; extends the clock to `end` only while a run is
+        OPEN — a closed run's grace window stays anchored at its close.
+        Detached (started beyond the gap, or no activity ever): returns "" with
+        zero side effects."""
+        if self._last_ts is None or start - self._last_ts > self._idle_gap:
+            return ""  # detached: never opens, never advances, never labels
+        sid = self._current or self._last_id
+        if self._current is not None:
+            self._last_ts = max(self._last_ts, end)  # advance only; never rewind
+        return sid
+
+    # ---- operator controls ---------------------------------------------------
+
     def begin(self, ts: float) -> str:
-        """Explicit '开始选品': force a fresh session boundary even with no gap."""
+        """Explicit '开始选品': force a fresh boundary; verdicts now belong here."""
         self._open(ts)
-        self._last_ts = ts  # active ground truth, same as observe(opens=True)
+        self._last_ts = ts
+        self._ended = None
         return self._current or ""
 
-    def end(self) -> None:
-        """Explicit '结束选品': close the run. `last_session(at=...)` still
-        resolves to it within the idle gap so a verdict marked right after can
-        bind to the run it describes."""
+    def end(self, ts: float) -> None:
+        """Explicit '结束选品': close the run and anchor the verdict grace window
+        at `ts` — the operator asserts the run existed until this moment (the
+        preceding stretch may be click-free scroll-reading). No-op if no run."""
+        if self._current is None:
+            return
+        self._ended = (self._current, ts)
         self._current = None
+        self._last_ts = ts if self._last_ts is None else max(self._last_ts, ts)
 
     def current(self) -> str:
         """The active (open) session_id, or "" when none is open."""
         return self._current or ""
 
     def last_session(self, *, at: float) -> str:
-        """The session an outcome at time `at` attaches to: the active run, or —
-        within the idle gap of the last activity — the most recently closed one.
-        Beyond the gap the honest answer is "" (re-review finding: _last_id must
-        not bind a fresh-context verdict to a long-dead trajectory). Symmetric
-        with click segmentation: an outcome that would have merged binds; one
-        that would have opened a new run does not."""
+        """The session a verdict at time `at` attaches to, in priority order:
+        1. a run explicitly ended within the idle gap of `at` — the deliberate
+           close outranks any implicit run a stray tab-focus click opened;
+        2. the open run (explicit begins cleared the preference in rule 1);
+        3. within the gap of the last activity, the most recent run;
+        4. "" — honestly sessionless (never mislabel a long-dead run)."""
+        if self._ended is not None and at - self._ended[1] <= self._idle_gap:
+            return self._ended[0]
         if self._current is not None:
             return self._current
         if (
@@ -82,6 +113,26 @@ class Sessionizer:
         ):
             return self._last_id
         return ""
+
+    # ---- restart --------------------------------------------------------------
+
+    def rehydrate(
+        self,
+        *,
+        session_id: str,
+        last_ts: float,
+        open_run: bool,
+        ended_ts: float | None,
+    ) -> None:
+        """Restore state from the behavior store after a brain restart, so an
+        in-flight run continues (no split) and a prompt post-restart verdict
+        still binds (no orphan). Call before any observe/begin."""
+        if not session_id:
+            return
+        self._last_id = session_id
+        self._last_ts = last_ts
+        self._current = session_id if open_run else None
+        self._ended = (session_id, ended_ts) if (not open_run and ended_ts) else None
 
     def _open(self, ts: float) -> None:
         # Millisecond precision + a per-instance sequence: deterministic across a

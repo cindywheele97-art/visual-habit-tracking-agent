@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# (latest_session_state tests appended below — rehydration source for P7.3.)
+
 import json
 import logging
 from pathlib import Path
@@ -49,3 +51,29 @@ def test_append_is_fail_soft_but_loud(tmp_path: Path, caplog: pytest.LogCaptureF
         store.append(kind="click", ts="t")
     assert "behavior store" in caplog.text
     assert store.query() == []  # degraded, not crashed
+
+
+def test_latest_session_state_open_and_closed(tmp_path: Path) -> None:
+    # WHY (P7.3 rehydration): after a brain restart the Sessionizer must know
+    # the most recent session, whether it was explicitly closed, and when —
+    # else restarts split in-flight runs and orphan prompt verdicts.
+    from glimpse_brain.store import BehaviorStore
+
+    store = BehaviorStore(tmp_path / "b.sqlite3")
+    assert store.latest_session_state() is None  # empty store
+
+    store.append(kind="click", ts="T1", session_id="sel-1-0")
+    sid, last_ts, open_run, ended = store.latest_session_state()
+    assert (sid, last_ts, open_run, ended) == ("sel-1-0", "T1", True, None)
+
+    store.append(
+        kind="selection_control", ts="T2", session_id="sel-1-0",
+        payload={"action": "end"},
+    )
+    sid, last_ts, open_run, ended = store.latest_session_state()
+    assert (sid, open_run, ended) == ("sel-1-0", False, "T2")
+
+    # a NEW session after the closed one → open again, no stale ended_ts
+    store.append(kind="click", ts="T3", session_id="sel-3-0")
+    sid, last_ts, open_run, ended = store.latest_session_state()
+    assert (sid, open_run, ended) == ("sel-3-0", True, None)

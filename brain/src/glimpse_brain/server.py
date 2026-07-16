@@ -129,7 +129,6 @@ class GlimpseServer:
         sessionizer: Sessionizer | None = None,
     ) -> None:
         self._cfg = cfg
-        self._sessions = sessionizer if sessionizer is not None else Sessionizer()
         self._redactor = Redactor(cfg.redaction.patterns)
         self._events = EventLog(
             Path(cfg.brain.event_log),
@@ -138,6 +137,23 @@ class GlimpseServer:
             raw_kinds=HABIT_KINDS,
         )
         self._store = BehaviorStore(Path(cfg.brain.behavior_db))
+        # Sessionizer state is memory-only but reconstructible: rehydrate from
+        # the store so a brain restart neither splits an in-flight run nor
+        # orphans a verdict marked right after the restart. An injected
+        # sessionizer (tests) skips rehydration.
+        if sessionizer is not None:
+            self._sessions = sessionizer
+        else:
+            self._sessions = Sessionizer()
+            state = self._store.latest_session_state()
+            if state is not None:
+                sid, last_ts_iso, open_run, ended_iso = state
+                self._sessions.rehydrate(
+                    session_id=sid,
+                    last_ts=_epoch(last_ts_iso),
+                    open_run=open_run,
+                    ended_ts=_epoch(ended_iso) if ended_iso else None,
+                )
         # Conversation state is PER customer: the active tracker follows the
         # contact on screen; parked trackers keep their positional anchor,
         # tail, and text dedup so revisits restore context without re-firing.
@@ -347,10 +363,13 @@ class GlimpseServer:
             )
         elif isinstance(msg, DwellMsg):
             # A dwell is passive evidence and arrives when it CLOSES (after the
-            # clicks in its span): stamp by end_ts and opens=False so a backdated
-            # interval can't rewind the recency clock, split a run, or open a
-            # phantom session.
-            sid = self._sessions.observe(_epoch(msg.end_ts), opens=False)
+            # clicks in its span). observe_span decides by the span's START:
+            # continuation attaches (and extends an OPEN run's recency);
+            # detached — began beyond the idle gap — is honestly unattributed
+            # and inert, so a stale dwell can't resurrect a dead run.
+            sid = self._sessions.observe_span(
+                _epoch(msg.start_ts), _epoch(msg.end_ts)
+            )
             interval = {
                 "app": msg.app,
                 "window_title": msg.window_title,
@@ -382,7 +401,9 @@ class GlimpseServer:
                 sid = self._sessions.begin(_epoch(msg.ts))
             else:
                 sid = self._sessions.current()
-                self._sessions.end()
+                # end(ts) anchors the verdict grace window at the explicit
+                # close — the run may have ended after a click-free stretch.
+                self._sessions.end(_epoch(msg.ts))
             self._events.append(
                 "selection_control",
                 "",
