@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>选品周刊 · Selection Weekly</title>
+<!--
+  DESIGN SPEC · 选品周刊 Selection Weekly
+  Inherited direction: xcx direction-3 street-weekly (user-designated).
+  Reference world: 独立街头刊物。这里的转译:操作者的每一天浏览是「本期」,
+  轨迹是栏目,选中商品是封面故事,数据来源做成版权页脚注。
+  Audience: 选品操作者本人,本地看板。Dials V8 M5 D7。
+
+  Tokens (inherited verbatim)
+  bg #F5F2EB 新闻纸 · ink #141414 油墨 · acid #D8F34E 酸性荧光(只做荧光笔)
+  muted #77726A · radius 0 · rules 2px ink · display Noto Serif SC 900
+  en labels letter-spacing .22em uppercase · numbers tabular-nums
+
+  Scope rules (inherited)
+  acid 只出现在油墨底上或作荧光笔划线;绝不做大面积底色,绝不做正文色。
+  宋体只用于刊名/封面故事标题;操作文字一律无衬线。
+  verdict 身份 = 文字+边框(单色系统,构造上不依赖颜色)。
+  dwell 条 = 单系列油墨条,acid 只划本期最高注意力那一条(荧光笔角色)。
+
+  Data: 全部来自 /api/report(真实 behavior.sqlite3),无 mock;
+  空库时渲染诚实的「本期暂无内容」创刊页。
+  Motion: 跑马灯 + IntersectionObserver 进场(html.rv + 1.2s 兜底,
+  prefers-reduced-motion 关闭),继承参照页实现。
+  Don't: 圆角/投影/彩色渐变/第二彩色/emoji。
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@900&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#F5F2EB;--ink:#141414;--acid:#D8F34E;--muted:#77726A;--rule:#141414}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+  .serif{font-family:"Noto Serif SC","Songti SC","SimSun",serif;font-weight:900}
+  .en{letter-spacing:.22em;text-transform:uppercase}
+  .num{font-variant-numeric:tabular-nums}
+  .paper{max-width:760px;margin:0 auto;border-left:2px solid var(--rule);
+    border-right:2px solid var(--rule);min-height:100dvh;background:var(--bg)}
+
+  .masthead{display:flex;align-items:flex-end;justify-content:space-between;
+    padding:22px 24px 14px;border-bottom:2px solid var(--rule)}
+  .masthead .name{font-size:34px;line-height:1;letter-spacing:.06em}
+  .masthead .meta{font-size:10px;color:var(--muted);margin-top:8px;display:flex;gap:14px}
+  .masthead .folio{text-align:right;font-size:10px;color:var(--muted);line-height:1.8}
+  .masthead .folio b{display:block;font-size:13px;color:var(--ink)}
+
+  .marquee{background:var(--ink);color:var(--acid);overflow:hidden;white-space:nowrap;
+    border-bottom:2px solid var(--rule)}
+  .marquee .track{display:inline-block;padding:8px 0;font-size:11px;font-weight:700;
+    letter-spacing:.12em;animation:mq 18s linear infinite}
+  @keyframes mq{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  @media (prefers-reduced-motion:reduce){.marquee .track{animation:none}}
+
+  .kicker{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;
+    color:var(--muted);letter-spacing:.22em;text-transform:uppercase}
+  .kicker::after{content:'';flex:1;height:1px;background:rgba(20,20,20,.25)}
+
+  /* 本期数字 */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:2px solid var(--rule)}
+  .stat{padding:16px 18px;border-right:1px solid rgba(20,20,20,.25)}
+  .stat:last-child{border-right:none}
+  .stat .k{font-size:9px;font-weight:800;color:var(--muted);letter-spacing:.18em}
+  .stat .v{font-size:30px;font-weight:800;margin-top:4px;line-height:1}
+  .stat .v small{font-size:12px;font-weight:400;color:var(--muted)}
+
+  /* 封面故事 */
+  .cover{border-bottom:2px solid var(--rule);padding:22px 24px}
+  .cover h2{font-size:32px;line-height:1.22;margin-top:12px;text-wrap:balance}
+  .cover h2 .hl{background:linear-gradient(transparent 58%,var(--acid) 58%)}
+  .cover .dek{font-size:13px;color:#4A463E;line-height:1.75;margin-top:10px;
+    max-width:56ch;text-wrap:pretty}
+  .cover .why{margin-top:14px;border:1px solid var(--rule);background:rgba(255,255,255,.6);
+    padding:10px 12px;display:flex;gap:10px}
+  .cover .why .mark{font-weight:900;font-size:14px}
+  .cover .why p{font-size:11px;color:#4A463E;line-height:1.7}
+  .cover .why b{font-weight:800}
+
+  /* 栏目(轨迹) */
+  .runs{border-bottom:2px solid var(--rule);padding:20px 24px 8px}
+  .run{border:2px solid var(--rule);margin:14px 0;background:#fff}
+  .run summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;
+    gap:14px;padding:13px 16px}
+  .run summary::-webkit-details-marker{display:none}
+  .run summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .run .no{font-size:20px;font-weight:800;min-width:36px}
+  .run .t{font-size:15px;font-weight:800;flex:1}
+  .run .t small{display:block;font-size:10px;color:var(--muted);font-weight:400;margin-top:3px}
+  .run .badges{display:flex;gap:6px;align-items:center}
+  .badge{font-size:9px;font-weight:800;border:1.5px solid var(--ink);padding:2px 7px;
+    white-space:nowrap;letter-spacing:.06em}
+  .badge.dark{background:var(--ink);color:var(--bg)}
+  .run .arr{font-weight:800;transition:transform .2s}
+  .run[open] .arr{transform:rotate(90deg)}
+  .run .body{border-top:2px solid var(--rule);padding:14px 16px}
+
+  /* 注意力条(单系列油墨;acid 只划全刊最高) */
+  .pages .row{display:grid;grid-template-columns:minmax(0,1fr) 120px 64px;
+    gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(20,20,20,.18)}
+  .pages .row:last-child{border-bottom:none}
+  .pages .n{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .bar{height:12px;background:rgba(20,20,20,.08);position:relative}
+  .bar i{position:absolute;inset:0 auto 0 0;background:var(--ink);min-width:2px}
+  .bar.top i{background:var(--ink);
+    background-image:linear-gradient(var(--acid),var(--acid));
+    background-size:100% 4px;background-position:0 100%;background-repeat:no-repeat}
+  .pages .s{font-size:12px;font-weight:800;text-align:right}
+  .pages .s small{font-weight:400;color:var(--muted)}
+
+  /* 时间线 */
+  .tl{margin-top:14px;border-top:1px solid rgba(20,20,20,.25)}
+  .tl .ev{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid rgba(20,20,20,.14);
+    font-size:11.5px;align-items:baseline}
+  .tl .ts{color:var(--muted);white-space:nowrap;font-size:10.5px}
+  .tl .tag{font-size:8.5px;font-weight:800;border:1.5px solid var(--ink);
+    padding:1px 5px;white-space:nowrap}
+  .tl .tag.acid{background:var(--ink);color:var(--acid);border-color:var(--ink)}
+  .tl .tx{flex:1;line-height:1.5;overflow-wrap:anywhere}
+  .tl .tx small{color:var(--muted)}
+
+  /* verdict 行 */
+  .verdicts{margin-top:12px}
+  .verdicts .v-row{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;
+    border:1px solid var(--rule);margin-top:8px;background:rgba(255,255,255,.7)}
+  .verdicts .v-row .badge{margin-top:1px}
+  .verdicts .v-row .pk{font-size:12px;font-weight:700;line-height:1.5}
+  .verdicts .v-row .note{font-size:11px;color:#4A463E;margin-top:2px;line-height:1.6}
+
+  .filters{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .fbtn{font-size:11px;border:1.5px solid var(--ink);padding:5px 12px;background:#fff;
+    cursor:pointer;font-weight:700;min-height:28px}
+  .fbtn[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+  .fbtn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+  .backpage{padding:16px 24px 28px;font-size:10px;color:var(--muted);line-height:1.9}
+  .backpage b{color:var(--ink)}
+
+  .empty{padding:60px 24px;text-align:center}
+  .empty h2{font-size:26px;margin-top:12px}
+  .empty p{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.8}
+  .error{padding:40px 24px;border-bottom:2px solid var(--rule)}
+  .error b{font-weight:800}
+
+  html.rv .reveal{opacity:0;transform:translateY(14px)}
+  html.rv .reveal.in{opacity:1;transform:none;
+    transition:opacity .5s cubic-bezier(.16,1,.3,1),transform .5s cubic-bezier(.16,1,.3,1)}
+  @media (prefers-reduced-motion:reduce){html.rv .reveal{opacity:1;transform:none}}
+
+  @media (max-width:640px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .stat{border-bottom:1px solid rgba(20,20,20,.25)}
+    .masthead .name{font-size:26px}
+    .cover h2{font-size:24px}
+    .pages .row{grid-template-columns:minmax(0,1fr) 72px 58px}
+  }
+</style>
+<script>
+  document.documentElement.classList.add('rv');
+  setTimeout(function(){
+    document.querySelectorAll('.reveal:not(.in)').forEach(function(el){el.classList.add('in')});
+  }, 1200);
+</script>
+</head>
+<body>
+<div class="paper">
+  <div class="masthead">
+    <div>
+      <div class="name serif">选品周刊</div>
+      <div class="meta en num"><span>Selection Weekly</span><span id="vol">VOL.—</span><span id="date">—</span></div>
+    </div>
+    <div class="folio num"><b id="folio-issue">本期</b><span id="folio-span">—</span></div>
+  </div>
+
+  <div class="marquee" aria-hidden="true"><div class="track en num" id="marquee">载入本期数据 /// 载入本期数据 ///</div></div>
+
+  <main id="app" aria-live="polite">
+    <div class="empty"><div class="kicker">Loading · 排版中</div><h2 class="serif">本期正在付印</h2></div>
+  </main>
+
+  <div class="backpage num" id="backpage" hidden>
+    <b>版权页</b> · 本刊由 Glimpse 行为底座自动编纂。数据来源 behavior.sqlite3(本机,明文,不出本地);
+    点击与停留由 macOS 捕获层记录,轨迹由确定性会话器切分,结果由操作者亲手标记。
+    ※ 标记窗内的界面点击不计入任何轨迹;纯滚动阅读的注意力在扩展层(P7.4)上线前按 app 粒度记录。
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var app = document.getElementById('app');
+
+  function h(tag, cls, text){
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text !== undefined) el.textContent = text;
+    return el;
+  }
+  function fmtMin(sec){
+    if (sec >= 3600) return (sec/3600).toFixed(1) + ' 小时';
+    if (sec >= 60) return Math.round(sec/60) + ' 分钟';
+    return Math.round(sec) + ' 秒';
+  }
+  function fmtClock(iso){
+    var m = iso.match(/T(\d{2}:\d{2})/);
+    return m ? m[1] : iso;
+  }
+  function fmtDate(iso){
+    var m = iso.match(/(\d{4})-(\d{2})-(\d{2})/);
+    return m ? m[2] + '/' + m[3] : '';
+  }
+  var VERDICT = {selected:'选中', shortlisted:'入围', rejected:'淘汰'};
+  var KIND = {click:'点击', dwell:'停留', selection_control:'控制', selection_outcome:'结果'};
+
+  function observeReveals(){
+    if (!('IntersectionObserver' in window)) return;
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, {threshold:.08});
+    document.querySelectorAll('.reveal:not(.in)').forEach(function(el){ io.observe(el); });
+  }
+
+  function render(r){
+    app.textContent = '';
+    var s = r.stats;
+
+    document.getElementById('date').textContent = fmtDate(s.span[1] || '') || '—';
+    document.getElementById('vol').textContent = 'VOL.' + Math.max(s.sessions, 1);
+    document.getElementById('folio-span').textContent =
+      s.span[0] ? fmtClock(s.span[0]) + ' 至 ' + fmtClock(s.span[1]) : '—';
+    document.getElementById('backpage').hidden = false;
+
+    var mq = '本期轨迹 ' + s.sessions + ' 条 · 注意力合计 ' + fmtMin(s.dwell_seconds) +
+      ' · 选中 ' + s.outcomes.selected + ' · 入围 ' + s.outcomes.shortlisted +
+      ' · 淘汰 ' + s.outcomes.rejected + '  ///  ';
+    document.getElementById('marquee').textContent = mq + mq + mq;
+
+    if (!r.sessions.length){
+      var empty = h('div', 'empty');
+      empty.appendChild(h('div', 'kicker en', 'Issue Zero · 创刊号'));
+      empty.appendChild(h('h2', 'serif', '本期暂无内容'));
+      empty.appendChild(h('p', '', '打开 Glimpse,点「开始选品」,去 1688 逛一圈,回来这里就是你的第一期。'));
+      app.appendChild(empty);
+      return;
+    }
+
+    /* 本期数字 */
+    var stats = h('div', 'stats reveal');
+    [['轨迹 RUNS', String(s.sessions), ''],
+     ['点击 CLICKS', String(s.clicks), ''],
+     ['注意力 ATTENTION', fmtMin(s.dwell_seconds), ''],
+     ['已标记 VERDICTS', String(s.outcomes.selected + s.outcomes.shortlisted + s.outcomes.rejected), '']
+    ].forEach(function(row){
+      var el = h('div', 'stat');
+      el.appendChild(h('div', 'k en', row[0]));
+      var v = h('div', 'v num', row[1]);
+      el.appendChild(v);
+      stats.appendChild(el);
+    });
+    app.appendChild(stats);
+
+    /* 封面故事:最近一次「选中」;没有则最高注意力页 */
+    var coverOutcome = null, coverSession = null;
+    r.sessions.forEach(function(sess){
+      sess.outcomes.forEach(function(o){
+        if (o.verdict === 'selected'){ coverOutcome = o; coverSession = sess; }
+      });
+    });
+    var cover = h('div', 'cover reveal');
+    cover.appendChild(h('div', 'kicker en', 'Cover Story · 封面故事'));
+    if (coverOutcome){
+      var title = h('h2', 'serif');
+      title.appendChild(h('span', 'hl', coverOutcome.product_key || '本期选中'));
+      cover.appendChild(title);
+      cover.appendChild(h('p', 'dek',
+        '本期共考察 ' + coverSession.pages.length + ' 个页面,累计注意力 ' +
+        fmtMin(coverSession.dwell_seconds) + ',最终把它收入本期。'));
+      if (coverOutcome.note){
+        var why = h('div', 'why');
+        why.appendChild(h('span', 'mark', '※'));
+        var p = h('p');
+        var b = h('b', '', '选中理由 · ');
+        p.appendChild(b);
+        p.appendChild(document.createTextNode(coverOutcome.note));
+        why.appendChild(p);
+        cover.appendChild(why);
+      }
+    } else {
+      var topPage = null, topSess = null;
+      r.sessions.forEach(function(sess){
+        sess.pages.forEach(function(pg){
+          if (!topPage || pg.dwell_seconds > topPage.dwell_seconds){ topPage = pg; topSess = sess; }
+        });
+      });
+      var t2 = h('h2', 'serif');
+      t2.appendChild(document.createTextNode('本期尚未定稿,注意力最高的是'));
+      cover.appendChild(t2);
+      if (topPage){
+        var t3 = h('h2', 'serif');
+        t3.appendChild(h('span', 'hl', topPage.title));
+        cover.appendChild(t3);
+        cover.appendChild(h('p', 'dek', '停留 ' + fmtMin(topPage.dwell_seconds) +
+          ',点击 ' + topPage.clicks + ' 次。标记一个「选中」,它就是下一期封面。'));
+      }
+    }
+    app.appendChild(cover);
+
+    /* 全刊最高注意力页(acid 荧光笔只划它) */
+    var maxDwell = 0;
+    r.sessions.forEach(function(sess){
+      sess.pages.forEach(function(pg){ maxDwell = Math.max(maxDwell, pg.dwell_seconds); });
+    });
+
+    /* 栏目:轨迹 */
+    var runs = h('div', 'runs reveal');
+    runs.appendChild(h('div', 'kicker en', 'Field Notes · 本期轨迹'));
+
+    var filters = h('div', 'filters');
+    var current = 'all';
+    var fdefs = [['all','全部'],['marked','已标记'],['explicit','显式选品']];
+    fdefs.forEach(function(fd){
+      var b = h('button', 'fbtn', fd[1]);
+      b.setAttribute('aria-pressed', fd[0] === current ? 'true' : 'false');
+      b.addEventListener('click', function(){
+        current = fd[0];
+        filters.querySelectorAll('.fbtn').forEach(function(x){ x.setAttribute('aria-pressed','false'); });
+        b.setAttribute('aria-pressed','true');
+        runs.querySelectorAll('.run').forEach(function(d){
+          var show = current === 'all' ||
+            (current === 'marked' && d.dataset.marked === '1') ||
+            (current === 'explicit' && d.dataset.explicit === '1');
+          d.style.display = show ? '' : 'none';
+        });
+      });
+      filters.appendChild(b);
+    });
+    runs.appendChild(filters);
+
+    r.sessions.forEach(function(sess, i){
+      var d = document.createElement('details');
+      d.className = 'run';
+      d.dataset.marked = sess.outcomes.length ? '1' : '0';
+      d.dataset.explicit = sess.explicit ? '1' : '0';
+      if (i === 0) d.open = true;
+
+      var sm = document.createElement('summary');
+      sm.appendChild(h('span', 'no num serif', (i < 9 ? '0' : '') + (i + 1)));
+      var t = h('span', 't', (sess.pages[0] ? sess.pages[0].title : '(无页面记录)'));
+      t.appendChild(h('small', 'num',
+        fmtClock(sess.start_ts) + ' 至 ' + fmtClock(sess.end_ts) + ' · ' +
+        sess.clicks + ' 次点击 · 注意力 ' + fmtMin(sess.dwell_seconds)));
+      sm.appendChild(t);
+      var badges = h('span', 'badges');
+      badges.appendChild(h('span', 'badge' + (sess.explicit ? ' dark' : ''),
+        sess.explicit ? '显式' : '隐式'));
+      sess.outcomes.forEach(function(o){
+        badges.appendChild(h('span', 'badge', VERDICT[o.verdict] || o.verdict));
+      });
+      sm.appendChild(badges);
+      sm.appendChild(h('span', 'arr', '→'));
+      d.appendChild(sm);
+
+      var body = h('div', 'body');
+
+      if (sess.pages.length){
+        var pages = h('div', 'pages');
+        sess.pages.forEach(function(pg){
+          var row = h('div', 'row');
+          row.appendChild(h('span', 'n', pg.title));
+          var bar = h('div', 'bar' + (pg.dwell_seconds === maxDwell && maxDwell > 0 ? ' top' : ''));
+          var fill = h('i');
+          fill.style.width = maxDwell > 0 ?
+            Math.max(2, Math.round(pg.dwell_seconds / maxDwell * 100)) + '%' : '2px';
+          bar.appendChild(fill);
+          bar.title = pg.title + ' · ' + fmtMin(pg.dwell_seconds);
+          row.appendChild(bar);
+          var sv = h('span', 's num', fmtMin(pg.dwell_seconds));
+          row.appendChild(sv);
+          pages.appendChild(row);
+        });
+        body.appendChild(pages);
+      }
+
+      if (sess.outcomes.length){
+        var vs = h('div', 'verdicts');
+        sess.outcomes.forEach(function(o){
+          var vr = h('div', 'v-row');
+          vr.appendChild(h('span', 'badge', VERDICT[o.verdict] || o.verdict));
+          var box = h('div');
+          box.appendChild(h('div', 'pk', o.product_key || '(未记录商品)'));
+          if (o.note) box.appendChild(h('div', 'note', '※ ' + o.note));
+          vr.appendChild(box);
+          vs.appendChild(vr);
+        });
+        body.appendChild(vs);
+      }
+
+      var tl = h('div', 'tl');
+      sess.events.forEach(function(ev){
+        var row = h('div', 'ev num');
+        row.appendChild(h('span', 'ts', fmtClock(ev.ts)));
+        row.appendChild(h('span', 'tag' + (ev.kind === 'selection_outcome' ? ' acid' : ''),
+          KIND[ev.kind] || ev.kind));
+        var tx = h('span', 'tx');
+        tx.appendChild(document.createTextNode(ev.title || ''));
+        if (ev.detail) tx.appendChild(h('small', '', (ev.title ? ' · ' : '') + ev.detail));
+        row.appendChild(tx);
+        tl.appendChild(row);
+      });
+      body.appendChild(tl);
+
+      d.appendChild(body);
+      runs.appendChild(d);
+    });
+    app.appendChild(runs);
+    observeReveals();
+  }
+
+  fetch('/api/report').then(function(res){
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }).then(render).catch(function(err){
+    app.textContent = '';
+    var e = h('div', 'error');
+    e.appendChild(h('div', 'kicker en', 'Press Error · 印务事故'));
+    var p = h('p', 'dek');
+    p.appendChild(h('b', '', '本期无法排版:'));
+    p.appendChild(document.createTextNode(' ' + err.message +
+      '。确认 report 服务在运行,且 --db 指向存在的 behavior.sqlite3。'));
+    e.appendChild(p);
+    app.appendChild(e);
+  });
+})();
+</script>
+</body>
+</html>
